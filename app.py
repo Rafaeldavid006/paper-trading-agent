@@ -123,3 +123,76 @@ def dashboard():
         error=error,
         checked=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
     )
+
+@app.get("/market")
+def market():
+    from flask import request
+
+    password = os.environ.get("DASHBOARD_PASSWORD", "")
+    auth = request.authorization
+    supplied = auth.password if auth and auth.password else ""
+
+    if len(password) < 20:
+        return "יש להגדיר סיסמת אתר.", 503
+
+    if not secrets.compare_digest(
+        supplied.encode("utf-8"), password.encode("utf-8")
+    ):
+        return Response(
+            "Login required",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Paper Dashboard"'},
+        )
+
+    symbols = ["SPY", "QQQ", "CRSP", "SYM", "MP", "RKLB", "CRCL", "ORA"]
+    key = os.environ.get("ALPACA_API_KEY", "")
+    secret = os.environ.get("ALPACA_SECRET_KEY", "")
+    rows = []
+    error = None
+
+    try:
+        if not key or not secret:
+            raise ValueError("Missing credentials")
+
+        result = requests.get(
+            "https://data.alpaca.markets/v2/stocks/snapshots",
+            params={"symbols": ",".join(symbols), "feed": "iex"},
+            headers={
+                "APCA-API-KEY-ID": key,
+                "APCA-API-SECRET-KEY": secret,
+            },
+            timeout=(3, 10),
+            allow_redirects=False,
+        )
+        if result.status_code != 200:
+            raise ValueError("Data unavailable")
+
+        snapshots = result.json()
+        if not isinstance(snapshots, dict):
+            raise ValueError("Invalid response")
+
+        for symbol in symbols:
+            snapshot = snapshots.get(symbol) or {}
+            trade = snapshot.get("latestTrade") or {}
+            rows.append({
+                "symbol": symbol,
+                "price": trade.get("p", "לא זמין"),
+                "timestamp": trade.get("t", "לא זמין"),
+            })
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
+        error = "נתוני השוק אינם זמינים כרגע. בדוק הרשאות נתונים ומפתחות."
+
+    return render_template_string("""
+<!doctype html>
+<html lang="he" dir="rtl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>רשימת מעקב</title>
+<style>
+body{font-family:Arial;background:#101827;color:#eef2ff;
+max-width:800px;margin:30px auto;padding:16px}
+article{background:#1e293b;padding:16px;border-radius:12px;margin:12px 0}
+a{color:#93c5fd}small{overflow-wrap:anywhere}
+</style>
+<h1>רשימת מעקב</h1>
+<p>רשימת מח
