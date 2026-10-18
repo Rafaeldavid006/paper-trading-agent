@@ -29,6 +29,8 @@
 {% if discovery %}<section><h2>מצב: {{discovery.state}}</h2><p>מועד התחלה UTC: {{discovery.created_at}}</p>
 {% if discovery.superseded %}<p class="notice">המחקר מיושן: התקבל תיקון לאירוע.</p>{% endif %}
 {% if discovery.state=='failed' %}<p>המחקר נכשל או שהפלט לא עמד בבדיקות. לא תישלח בקשה נוספת אוטומטית לגרסה זו.</p>{% endif %}
+{% if discovery.can_retry and discovery_enabled %}<p>תוקנה בדיקת הציטוטים. ניתן לבצע ניסיון חוזר אחד, הנספר במכסה היומית ועלול לחייב לפי השימוש.</p>
+<form action="{{url_for('discover',version=event_version)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="retry" value="1"><button>ניסיון חוזר לאחר התיקון</button></form>{% endif %}
 {% if discovery.state=='searching' %}<p>בקשה נרשמה. רענן לצפייה בתוצאה. אם התהליך נקטע, אין ניסיון חוזר אוטומטי.</p>{% endif %}
 {% if discovery.report %}{% for section in discovery.report.sections %}<article><pre>{{section.text}}</pre><p>מקורות שהוחזרו כהפניות לניתוח:</p>{% for cite in section.citations %}<p><a href="{{cite.url}}" target="_blank" rel="noopener noreferrer">{{cite.title}}</a></p>{% endfor %}</article>{% endfor %}
 <details><summary>כל המקורות שהחזיר כלי החיפוש</summary>{% for src in discovery.report.sources %}<p><a href="{{src.url}}" target="_blank" rel="noopener noreferrer">{{src.title}}</a></p>{% endfor %}</details>
