@@ -2,6 +2,7 @@
 import os
 import re
 import secrets
+from datetime import timedelta
 from functools import wraps
 from pathlib import Path
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ from monitor import tick
 from discovery import Discovery
 from triage import screen
 from price_reaction import Reactions
+from dashboard_auth import DashboardAuth
 
 TYPE_LABELS=dict(earnings='דוחות ותחזיות',merger='מיזוגים ורכישות',financing='גיוס ומימון',
     investment_contract='השקעות וחוזים',monetary_policy='ריבית ומדיניות מוניטרית',
@@ -29,7 +31,8 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
     app=Flask(__name__)
     app.secret_key=os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
     app.config.update(MAX_CONTENT_LENGTH=32768,SESSION_COOKIE_HTTPONLY=True,
-                      SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=True)
+                      SESSION_COOKIE_SAMESITE='Strict',SESSION_COOKIE_SECURE=True,
+                      PERMANENT_SESSION_LIFETIME=timedelta(hours=4),SESSION_REFRESH_EACH_REQUEST=False)
     db_path=os.environ.get('EVENT_DB','events.db')
     if store is None and not Path(db_path).parent.is_dir():
         raise ValueError('EVENT_DB parent directory must exist')
@@ -37,6 +40,7 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
     pipeline=Pipeline(store)
     discovery=Discovery(store)
     reactions=Reactions(store)
+    login_state=DashboardAuth(store,app.secret_key)
     app.extensions['research_pipeline']=pipeline
 
     def protected(fn):
@@ -46,8 +50,11 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
             if len(password)<20:return 'Configure DASHBOARD_PASSWORD with at least 20 characters.',503
             auth=request.authorization
             supplied=auth.password if auth and auth.password else ''
-            if not secrets.compare_digest(password.encode(),supplied.encode()):
-                return Response('Login required',401,{'WWW-Authenticate':'Basic realm="Research"'})
+            if not (login_state.valid(session.get('login_token'),password) or
+                    secrets.compare_digest(password.encode(),supplied.encode())):
+                if request.method=='GET' and not request.headers.get('Authorization'):
+                    return redirect(url_for('login'))
+                return Response('Login required',401)
             if request.method=='POST':
                 token=session.get('csrf','')
                 if not token or not secrets.compare_digest(token.encode(),request.form.get('csrf','').encode()):abort(403)
@@ -69,9 +76,45 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
         if not 1<=value<=100:raise ValueError('invalid AI daily limit')
         return value
 
+    @app.route('/login',methods=['GET','POST'])
+    def login():
+        password=os.environ.get('DASHBOARD_PASSWORD','')
+        if len(password)<20:
+            return 'Dashboard access is not configured.',503
+        if request.method=='GET':
+            if login_state.valid(session.get('login_token'),password):
+                return redirect(url_for('index'))
+            session.setdefault('csrf',secrets.token_hex(32))
+            return render_template('login.html',error=None)
+        token=session.get('csrf','')
+        if not token or not secrets.compare_digest(token.encode(),request.form.get('csrf','').encode()):
+            abort(403)
+        attempt=login_state.claim_attempt()
+        if attempt is None:
+            response=app.make_response((render_template('login.html',error='יותר מדי ניסיונות כניסה. נסה שוב בעוד 15 דקות.'),429))
+            response.headers['Retry-After']='900'
+            return response
+        supplied=request.form.get('password','')
+        if len(supplied)>1024 or not secrets.compare_digest(password.encode(),supplied.encode()):
+            return render_template('login.html',error='הסיסמה אינה נכונה.'),401
+        login_state.revoke(session.get('login_token'))
+        login_token=login_state.issue(password,attempt)
+        session.clear()
+        session.permanent=True
+        session['login_token']=login_token
+        session['csrf']=secrets.token_hex(32)
+        return redirect(url_for('index'))
+
+    @app.post('/logout')
+    @protected
+    def logout():
+        login_state.revoke(session.get('login_token'))
+        session.clear()
+        return redirect(url_for('login'))
+
     @app.context_processor
     def context():
-        return dict(csrf=session.get('csrf'),types=sorted(ROUTES),relations=sorted(RELATIONS),
+        return dict(csrf=session.get('csrf'),session_logged_in=bool(session.get('login_token')),types=sorted(ROUTES),relations=sorted(RELATIONS),
                     type_labels=TYPE_LABELS,relation_labels=RELATION_LABELS,ai_enabled=enabled(),
                     discovery_enabled=os.environ.get('ENABLE_WEB_RESEARCH','false').lower()=='true')
 
