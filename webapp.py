@@ -12,6 +12,7 @@ from relationships import RELATIONS
 from pipeline import Pipeline
 from monitor import tick
 from discovery import Discovery
+from triage import screen
 
 TYPE_LABELS=dict(earnings='דוחות ותחזיות',merger='מיזוגים ורכישות',financing='גיוס ומימון',
     investment_contract='השקעות וחוזים',monetary_policy='ריבית ומדיניות מוניטרית',
@@ -88,10 +89,13 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
         for event in events:
             payload=json.loads(event['payload'])
             event['headline']=payload.get('headline',event['symbol']) if isinstance(payload,dict) else event['symbol']
+            event['screening']=screen(event)
         configured=bool(os.environ.get('ALPACA_API_KEY') and os.environ.get('ALPACA_SECRET_KEY'))
         return render_template('research.html',mode='index',events=events,health=health,
             news_configured=configured,ai_configured=bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL')),
-            persistent=os.environ.get('PERSISTENT_STORAGE_CONFIRMED')=='true')
+            persistent=os.environ.get('PERSISTENT_STORAGE_CONFIRMED')=='true',
+            auto_research=os.environ.get('ENABLE_AUTO_RESEARCH')=='true',
+            daily_limit=limit(),watchlist=os.environ.get('WATCHLIST','SPY,QQQ'))
 
     @app.post('/collect')
     @protected
