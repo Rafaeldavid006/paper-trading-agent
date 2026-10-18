@@ -1,0 +1,4 @@
+.paper-controls input[type="checkbox"]{display:inline-block;width:auto;padding:0;margin:0 0 0 10px;accent-color:#a9d6fa}
+.paper-controls button:disabled{background:#506177;color:#c8d2df;cursor:not-allowed;opacity:.7}
+.paper-controls header{align-items:center;flex-wrap:wrap}
+.paper-controls bdi{overflow-wrap:anywhere}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>בקרת חשבון דמו · אביעד</title><link rel="stylesheet" href="{{url_for('static',filename='research.css')}}"><link rel="stylesheet" href="{{url_for('static',filename='paper.css')}}"></head>
+<body class="paper-controls"><header><a href="{{url_for('index')}}">חזרה למחקר</a><span class="badge">Paper בלבד</span>
+{% if session_logged_in %}<form action="{{url_for('logout')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>יציאה</button></form>{% endif %}</header>
+<main><h1>בקרת חשבון הדמו</h1>
+<p>מסך בדיקה ובקרה בלבד. אין כאן שליחת עסקאות או אסטרטגיית מסחר. אין להזין מפתחות API או פרטי חשבון.</p>
+{% for message in get_flashed_messages() %}<p class="notice" role="status">{{message}}</p>{% endfor %}
+{% if status is none %}
+<section><h2>החיבור טרם הוגדר</h2><p>לא הוזרק מתאם חשבון למסך זה. נדרש חיבור נפרד ומאובטח שאושר מראש. האתר אינו קורא מפתחות גישה לצורך מסך זה.</p><p>הפעלה חסומה · לא בוצעה בדיקה מול הספק.</p></section>
+{% else %}
+<section><h2>מצב שמור</h2>
+<p><strong>{{'עצירת חירום פעילה' if status.stopped else ('הרשאת דמו פעילה' if status.enabled else 'הרשאת דמו כבויה')}}</strong></p>
+<p>{{'בדיקה עדכנית עברה' if status.check_ok else 'אין בדיקה עדכנית שמאשרת הפעלה'}}</p>
+{% if status.checked_at is not none %}<p>בדיקה אחרונה (UTC): <bdi>{{status.checked_at_iso}}</bdi></p><p class="muted">תוצאת הבדיקה נשארת עדכנית למשך 30 שניות בלבד. הפעלה דורשת בדיקה נוספת מול הספק. רענון הדף אינו מבצע בדיקת חיבור.</p>{% endif %}
+{% if status.check_ok %}<div class="grid"><div>מזומן: <bdi>{{status.summary.cash}}</bdi> דולר</div><div>שווי תיק: <bdi>{{status.summary.equity}}</bdi> דולר</div><div>מסחר רגיל: {{'פתוח' if status.summary.market_open else 'סגור'}}</div><div>פוזיציות: {{status.summary.positions}} · פקודות פתוחות: {{status.summary.open_orders}}</div></div>{% endif %}
+<p>פקודות במצב לא ודאי: {{status.unresolved}}. מצב לא ודאי מחייב בירור ואינו אישור לשידור חוזר.</p>
+<form action="{{url_for('paper_check')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>בדיקת חיבור ומצב חשבון</button></form>
+<p class="muted">הבדיקה מכבה תחילה את הרשאת הביצוע וקוראת נתוני Paper בלבד. גם לאחר הצלחה נדרשת הפעלה מפורשת. אין שינוי בחשבון אצל הספק.</p>
+</section>
+<section><h2>הפעלה מבוקרת</h2>
+<p>הפעלה אינה שולחת פקודה. נדרשים חשבון מזוהה, רשימת סימולים מאושרת, מזומן ללא הלוואה, עמידה במגבלות והיעדר פקודות פתוחות או לא פתורות.</p>
+{% if not status.capable %}<p class="notice">יכולת ההפעלה לא הוגדרה במתאם. אינה ניתנת להפעלה דרך המסך בלבד.</p>{% endif %}
+<form action="{{url_for('paper_enable')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><input type="hidden" name="revision" value="{{status.revision}}">
+<label><input type="checkbox" name="confirm" value="yes" required> אני מאשר הרשאת ביצוע Paper בלבד, בכפוף למגבלות.</label>
+{% if status.stopped %}<label><input type="checkbox" name="resume" value="yes" required> אני מאשר במפורש שחרור של העצירה השמורה לאחר בדיקה חדשה.</label>{% endif %}
+<button {% if not status.check_ok or not status.capable or status.unresolved or status.enabled %}disabled{% endif %}>{{'שחרור עצירה והפעלת הרשאה' if status.stopped else 'הפעלת הרשאת דמו'}}</button></form>
+</section>
+<section><h2>עצירה</h2><p>עצירה חוסמת פקודות חדשות ונשמרת גם לאחר אתחול. היא אינה מבטלת פקודות פתוחות ואינה סוגרת פוזיציות.</p>
+<form action="{{url_for('paper_stop')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>עצירת פקודות חדשות</button></form>
+<p>ביטול פקודות אצל הספק אינו זמין מהמסך בשלב זה. בקשת ביטול אינה הוכחה לביטול; נדרש אימות מצב סופי, וייתכן מילוי חלקי או מצב לא ידוע.</p></section>
+{% endif %}
+<section><h2>מגבלות קבועות</h2><p>מניות בלבד · ללא שורט או הלוואה · עד $5,000 לסימול · עד $20,000 חשיפה כוללת · שתי פקודות חדשות בדקה.</p><p>הפסד יומי של $1,000 חוסם פקודות חדשות, אך אינו מבטיח שההפסד לא יחרוג ממנו. פקודות פתוחות נספרות במלוא הכמות המקורית, גם לאחר מילוי חלקי.</p></section>
+</main></body></html>
