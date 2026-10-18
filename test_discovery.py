@@ -116,23 +116,23 @@ class DiscoveryTests(unittest.TestCase):
 
     def test_worker_collects_then_researches_without_graph(self):
         def collect(s,_):s.heartbeat('alpaca-news','ok');return 0
-        result=cycle(self.s,collector=collect,transport=lambda _:response())
+        result=cycle(self.s,price_transport=lambda *args:[],collector=collect,transport=lambda _:response())
         self.assertEqual(result['status'],'completed')
-        again=cycle(self.s,collector=collect,transport=lambda _:self.fail('repeat'))
+        again=cycle(self.s,price_transport=lambda *args:[],collector=collect,transport=lambda _:self.fail('repeat'))
         self.assertEqual(again['status'],'no_recent_pending_event')
 
     def test_worker_blocks_incomplete_coverage(self):
         def collect(s,_):s.heartbeat('alpaca-news','coverage_incomplete');return 0
-        self.assertEqual(cycle(self.s,collector=collect,transport=lambda _:self.fail('called'))['status'],'blocked_source_coverage')
+        self.assertEqual(cycle(self.s,price_transport=lambda *args:[],collector=collect,transport=lambda _:self.fail('called'))['status'],'blocked_source_coverage')
 
     def test_worker_skips_old_event(self):
         self.now+=timedelta(hours=1)
         def collect(s,_):s.heartbeat('alpaca-news','ok');return 0
-        self.assertEqual(cycle(self.s,collector=collect)['status'],'no_recent_pending_event')
+        self.assertEqual(cycle(self.s,price_transport=lambda *args:[],collector=collect)['status'],'no_recent_pending_event')
 
     def test_worker_disabled_by_default(self):
         with patch.dict(os.environ,{'ENABLE_AUTO_RESEARCH':'false'}):
-            with self.assertRaises(ValueError):cycle(self.s,collector=lambda *_:self.fail('called'))
+            with self.assertRaises(ValueError):cycle(self.s,price_transport=lambda *args:[],collector=lambda *_:self.fail('called'))
 
     def test_supervisor_requires_persistent_store_for_automatic_mode(self):
         from serve import validate_environment
