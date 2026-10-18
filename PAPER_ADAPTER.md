@@ -3,7 +3,8 @@
 Base: `Rafaeldavid006/paper-trading-agent` main at
 `a55a2e984f11c5e328a1dc03fb51ad643fb1670d`.
 
-This is development work on a draft PR, not a deployment or an activated trader.
+The generic adapter remains disabled by default. The separately approved fixed
+one-shot Paper experiment is documented at the end of this file; it is not a strategy.
 The authenticated research app now includes a Hebrew `/paper` status/control screen.
 `create_app(..., paper_adapter=None)` still defaults to no adapter. Production
 `wsgi.py` now explicitly injects a SEPARATE read-only connection, not the execution
@@ -11,7 +12,9 @@ adapter. It consumes existing server-held ALPACA_API_KEY/ALPACA_SECRET_KEY value
 inside the server only and stores its snapshot at /var/data/paper-readonly.sqlite.
 No credentials are retrieved/displayed through tooling or stored in the snapshot.
 Local development/tests use mocks exclusively. The separately approved deployment
-performs one bounded read-only Paper probe per worker startup; no order is sent. There is no strategy, order-submission HTTP endpoint,
+performs one bounded read-only Paper probe per web worker startup. The separate
+approved experiment process alone can perform its fixed roundtrip. There is no
+generic strategy, order-submission HTTP endpoint,
 AI-text-to-order conversion, environment-variable activation, or live toggle.
 
 ## Included
@@ -212,3 +215,63 @@ change, sanitized logs, server factory wiring, auth/CSRF, stale/error/interrupte
 reads, snapshot allowlisting, and absence of production execution capability.
 No actual account credentials are used in local tests. Live startup connectivity
 and public deployment checks must be verified separately after approved deployment.
+
+## Approved one-shot Paper connectivity experiment (2026-10-18)
+
+This is NOT a general strategy and does not enable the generic execution adapter.
+The separate `paper_experiment_worker.py` child is bound to one immutable experiment
+ID and the existing owner-matched account fingerprint. It can buy **one AAPL share**
+with notional at most **$1,000 virtual**, then sell only the exact acquired quantity
+once the buy is terminal. It will never create a second entry. The existing
+$5,000/symbol, $20,000 gross, $1,000 daily-loss, cash-only/equities/no-short gates
+remain in force. A daily-loss stop can also block the exit; this is not a promise
+that a position will always be closed or that losses cannot exceed the limit.
+
+Approval was given at 2026-10-18 20:08:05 UTC. Migration captures the existing
+read-only account's `checked_at` into immutable `identity_first_seen` before a new
+startup probe. A fingerprint first seen after approval, absent or malformed timing,
+or a different fingerprint fails closed. Recreated account storage cannot silently
+become approved. The immutable buy/sell client IDs are also queried at the broker
+before first entry: anything other than explicit 404 blocks new entry. Do not delete,
+reset, restore older copies of, or manually edit experiment state. Missing or damaged
+state requires operator investigation, not an automatic new approval.
+
+The worker checks the broker's fresh clock and waits for its regular session;
+weekends, pre/post-market and `next_close` are independently gated. Current public
+`next_open` is available in sanitized status logs and the authenticated screen.
+No quote is fetched while waiting for the session. Fresh AAPL IEX quotes use only
+`https://data.alpaca.markets/v2/stocks/AAPL/quotes/latest?feed=iex`, existing server-held
+keys, and no new data subscriptions. Quote age must be 0–10 seconds, positive,
+uncrossed, spread <=1%. Buy price is ask rounded up to a cent; sell is bid rounded
+down to a cent. Rounding and final quote movement cannot exceed 0.1%; $1,000 is a
+hard cap, **not** an arbitrary marketable limit. No fill or profitable exit is promised.
+
+A successful first eligible check establishes a 15-minute entry window, but a failed
+safety/data check blocks rather than chasing/repricing. Orders are durable before
+transmission. Restart, timeout and unknown results cause GET reconciliation, never a
+second POST. Partial entry fills are not sold until the entry is terminal; fractional
+exits require fractionable-asset permission. Any preexisting AAPL holding or open order
+blocks entry. Exit requires the observed AAPL holding to equal the acquired quantity.
+Assume no other actor trades this account during the experiment: broker snapshots
+are not atomic, and unrelated manual activity can force manual attention.
+
+Each working order gets at most one cancellation attempt after 60 seconds, only for
+its validated broker ID and only during a regular session. Cancellation is not proof
+of cancellation. GET reconciliation checks outcomes; unresolved submission is bounded
+to 180 seconds and unresolved cancellation to 120 seconds after the attempt. A sell
+that does not fully fill leaves `manual_attention`; there is no second exit attempt,
+market order, liquidation or automatic retry. Completed means both recorded fills
+match and a final account read shows no AAPL holding and no open orders.
+
+The authenticated `/paper` screen reads local experiment status, never submits an
+order. Its CSRF-protected stop latches the same database lock used by final broker
+writes. Stop blocks **all new writes, including exit and cancellation**. Already sent
+orders may still fill; holdings/open orders may need manual handling in Alpaca Paper.
+Stop is not silently cleared at restart and has no screen reset. A blocked/terminal
+experiment does not restart. The web and existing research process continue normally
+when the one-shot child finishes. No secrets, account IDs, balances or holdings are
+logged: only mode, phase, fixed reason and public market next-open time.
+
+Tests use injected/mock transports exclusively. Authenticated production UI and real
+order execution are not claimed verified by these tests. Deployment verification
+must separately report sanitized worker status and actual terminal results.

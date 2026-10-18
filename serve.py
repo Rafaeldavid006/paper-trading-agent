@@ -27,17 +27,21 @@ def main():
     try:path,port=validate_environment(os.environ)
     except ValueError as exc:
         print(str(exc),file=sys.stderr);return 1
-    stop=threading.Event();children=[]
+    stop=threading.Event();children=[];experiment=None
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
             '--workers','1','--threads','4','--timeout','120','wsgi:app']))
         if os.environ.get('ENABLE_AUTO_RESEARCH')=='true':
             children.append(subprocess.Popen([sys.executable,'research_worker.py','--db',path,'--interval','60']))
+        # Fixed approved one-shot child, separate from research and the GET-only UI.
+        # Its normal terminal exit must not restart or stop the web service.
+        experiment=subprocess.Popen([sys.executable,'paper_experiment_worker.py'])
         while not stop.wait(.5):
             if any(child.poll() is not None for child in children):return 1
         return 0
     finally:
+        if experiment is not None:children.append(experiment)
         for child in children:
             if child.poll() is None:child.terminate()
         for child in children:
