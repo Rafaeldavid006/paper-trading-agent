@@ -29,7 +29,7 @@ class DiscoveryTests(unittest.TestCase):
     def tearDown(self):self.env.stop();self.tmp.cleanup()
 
     def ingest(self):return self.s.ingest(source='fixture',source_id='1',symbol='AAA',
-        published_at=self.now,updated_at=self.now,url='https://example.org/event',payload={'headline':'test'})[0]
+        published_at=self.now,updated_at=self.now,url='https://example.org/event',payload={'headline':'Fixture Corp reports quarterly earnings'})[0]
 
     def test_failure_codes_do_not_expose_provider_secrets(self):
         from urllib.error import HTTPError, URLError
