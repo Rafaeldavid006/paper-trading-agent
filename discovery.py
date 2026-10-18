@@ -1,5 +1,8 @@
 """Bounded web-backed event research. No source dates or graph facts are invented."""
 import hashlib
+import logging
+import socket
+import urllib.error
 import json
 import os
 import urllib.request
@@ -7,6 +10,27 @@ from urllib.parse import urlparse
 from event_core import iso, utc
 from event_types import research_brief
 from ai_research import NoRedirect
+
+
+def failure_code(exc):
+    # Never persist provider response bodies, URLs, headers or exception messages.
+    if isinstance(exc, urllib.error.HTTPError):
+        return 'provider_http_' + str(int(exc.code))
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return 'provider_timeout'
+    if isinstance(exc, urllib.error.URLError):
+        return 'provider_connection_failed'
+    known = {
+        'incomplete research': 'response_incomplete',
+        'search was not executed': 'web_search_not_executed',
+        'citation absent from searched sources': 'citation_inventory_mismatch',
+        'cited report required': 'citations_missing',
+        'invalid report text': 'invalid_report_text',
+        'response too large': 'response_too_large',
+    }
+    if isinstance(exc, ValueError):
+        return known.get(str(exc), 'invalid_response')
+    return 'unexpected_research_error'
 
 
 def safe_url(value):
@@ -132,7 +156,9 @@ class Discovery:
             result=search_event(event,transport)
             with self.store.db() as c:c.execute("UPDATE discovery_runs SET state='completed',report=? WHERE id=?",
                 (json.dumps(result,ensure_ascii=False),run_id))
-        except Exception:
+        except Exception as exc:
+            code = failure_code(exc)
+            logging.getLogger(__name__).warning('web_research_failed code=%s', code)
             with self.store.db() as c:c.execute("UPDATE discovery_runs SET state='failed',error=? WHERE id=?",
-                ('web_research_failed_no_automatic_retry',run_id))
+                (code + '_no_automatic_retry',run_id))
         return self.get(version)
