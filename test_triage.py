@@ -68,7 +68,7 @@ class QueueTests(unittest.TestCase):
     def test_older_material_event_outranks_new_opinion(self):
         expected=self.add('1','Fixture agrees to acquire a competitor',age=60)
         self.add('2','Analyst says stock could soar')
-        result=cycle(self.store,collector=self.collect,transport=self.response)
+        result=cycle(self.store,price_transport=lambda *args:[],collector=self.collect,transport=self.response)
         self.assertEqual(result['event_version'],expected)
         with self.store.db() as c:
             self.assertEqual(c.execute('SELECT COUNT(*) FROM event_screenings').fetchone()[0],2)
@@ -78,13 +78,13 @@ class QueueTests(unittest.TestCase):
             self.add('shared:'+symbol,'Fixture reports quarterly earnings',symbol,'https://example.org/shared')
         calls=[]
         def transport(payload):calls.append(1);return self.response(payload)
-        cycle(self.store,collector=self.collect,transport=transport)
-        self.assertEqual(cycle(self.store,collector=self.collect,transport=transport)['status'],'no_recent_pending_event')
+        cycle(self.store,price_transport=lambda *args:[],collector=self.collect,transport=transport)
+        self.assertEqual(cycle(self.store,price_transport=lambda *args:[],collector=self.collect,transport=transport)['status'],'no_recent_pending_event')
         self.assertEqual(calls,[1])
 
     def test_skipped_event_is_audited_without_spend(self):
         self.add('1','Opinion: stocks to watch')
-        result=cycle(self.store,collector=self.collect,transport=lambda _:self.fail('paid call'))
+        result=cycle(self.store,price_transport=lambda *args:[],collector=self.collect,transport=lambda _:self.fail('paid call'))
         self.assertEqual(result['status'],'no_priority_candidate')
         with self.store.db() as c:
             self.assertEqual(c.execute('SELECT COUNT(*) FROM ai_attempts').fetchone()[0],0)
@@ -92,4 +92,4 @@ class QueueTests(unittest.TestCase):
 
     def test_old_event_never_reclassified_as_fresh(self):
         self.add('1','Fixture reports quarterly earnings',age=901)
-        self.assertEqual(cycle(self.store,collector=self.collect,transport=lambda _:self.fail('paid call'))['status'],'no_recent_pending_event')
+        self.assertEqual(cycle(self.store,price_transport=lambda *args:[],collector=self.collect,transport=lambda _:self.fail('paid call'))['status'],'no_recent_pending_event')
