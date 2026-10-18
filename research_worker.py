@@ -8,9 +8,10 @@ from event_core import Store,iso,utc
 from discovery import Discovery
 from monitor import tick
 from triage import record_screenings
+from price_reaction import Reactions
 
 
-def cycle(store,*,collector=tick,transport=None):
+def cycle(store,*,collector=tick,transport=None,price_transport=None):
     if os.environ.get('ENABLE_AUTO_RESEARCH')!='true' or os.environ.get('ENABLE_WEB_RESEARCH')!='true':
         raise ValueError('automatic and web research must be explicitly enabled')
     symbols=os.environ.get('WATCHLIST','SPY,QQQ').upper()
@@ -33,6 +34,8 @@ def cycle(store,*,collector=tick,transport=None):
             AND NOT EXISTS(SELECT 1 FROM discovery_runs d JOIN events old ON old.version_id=d.event_version
                 WHERE old.source=e.source AND old.url=e.url AND old.updated_at=e.updated_at)
             ORDER BY e.published_at DESC''',(cutoff,iso(now))).fetchall()
+    reactions=Reactions(store)
+    reactions.follow_up(price_transport)
     if not rows:return {'status':'no_recent_pending_event','order_permission':'none'}
     screened=record_screenings(store,[dict(row) for row in rows])
     candidates=[(event,result) for event,result in screened if result['auto_eligible']]
@@ -40,6 +43,7 @@ def cycle(store,*,collector=tick,transport=None):
         return {'status':'no_priority_candidate','screened':len(screened),'order_permission':'none'}
     candidates.sort(key=lambda pair:(pair[1]['priority'],pair[0]['published_at'],pair[0]['version_id']),reverse=True)
     selected,screening=candidates[0]
+    reactions.measure(selected['version_id'],price_transport)
     result=discovery.run(selected['version_id'],transport=transport,max_daily_calls=limit)
     return {'status':result['state'],'event_version':result['event_version'],'research_priority':screening['priority'],
             'screened':len(screened),'order_permission':'none'}
