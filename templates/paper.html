@@ -9,6 +9,25 @@
 {% for message in get_flashed_messages() %}<p class="notice" role="status">{{message}}</p>{% endfor %}
 {% if status is none %}
 <section><h2>החיבור טרם הוגדר</h2><p>לא הוזרק מתאם חשבון למסך זה. נדרש חיבור נפרד ומאובטח שאושר מראש. האתר אינו קורא מפתחות גישה לצורך מסך זה.</p><p>הפעלה חסומה · לא בוצעה בדיקה מול הספק.</p></section>
+{% elif status.readonly %}
+<section><h2>חיבור Paper לקריאה בלבד</h2>
+<p class="notice">מסחר חסום במבנה החיבור הזה. אין מסלול לשליחת פקודות או לביטולן.</p>
+<p>{{'קריאת החשבון הצליחה' if status.last_check_ok else 'קריאת החשבון לא הושלמה'}}</p>
+{% if status.masked_identity %}<p>סיומת מזהה חשבון: <bdi>{{status.masked_identity}}</bdi>. זהות החשבון עדיין ממתינה לאישור בעל החשבון מול Alpaca; הצלחת החיבור אינה אישור לזהות או למסחר.</p>{% endif %}
+{% if status.checked_at_iso %}<p>נבדק לאחרונה (UTC): <bdi>{{status.checked_at_iso}}</bdi></p>{% endif %}
+{% if not status.fresh %}<p>הנתונים אינם עדכניים. לחץ על בדיקה לקבלת תמונת מצב חדשה; רענון הדף אינו קורא מהספק.</p>{% endif %}
+{% if status.reason == 'authentication_failed' %}<p>המפתחות הקיימים לא אושרו לקריאת חשבון Paper. נדרשת הגדרה מאובטחת בנפרד; אין להזין מפתחות בצ׳אט או במסך זה.</p>{% elif status.reason == 'identity_changed' %}<p>התקבל מזהה חשבון שונה מהבדיקה הראשונה. התצוגה נחסמה ונדרש בירור לפני המשך.</p>{% elif not status.last_check_ok %}<p>הבדיקה לא הושלמה או שהנתונים לא תקינים. אין אישור להפעלה.</p>{% endif %}
+<form action="{{url_for('paper_check')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>בדיקת חיבור ומצב חשבון</button></form>
+</section>
+{% if status.last_check_ok %}
+<section><h2>תמונת החשבון האחרונה{% if not status.fresh %} · לא עדכנית{% endif %}</h2>
+<div class="grid"><div>מזומן: <bdi>{{status.summary.cash}}</bdi> {{status.summary.currency}}</div><div>שווי תיק: <bdi>{{status.summary.equity}}</bdi> {{status.summary.currency}}</div><div>מצב חשבון: <bdi>{{status.summary.account_status}}</bdi></div><div>מסחר רגיל: {{'פתוח' if status.summary.market_open else 'סגור'}}</div></div>
+<h3>החזקות ({{status.summary.positions}})</h3>
+<ul>{% for p in status.summary.holdings %}<li><bdi>{{p.symbol}}</bdi> · כמות {{p.qty}} · שווי {{p.value}} · <bdi>{{p.side}}</bdi></li>{% else %}<li>אין החזקות בתמונת המצב.</li>{% endfor %}</ul>
+<h3>פקודות פתוחות ({{status.summary.open_orders}})</h3>
+<ul>{% for o in status.summary.orders %}<li><bdi>{{o.symbol}}</bdi> · <bdi>{{o.side}}</bdi> · כמות {{o.qty}} · מולא {{o.filled}} · <bdi>{{o.status}}</bdi></li>{% else %}<li>אין פקודות פתוחות בתמונת המצב.</li>{% endfor %}</ul>
+<p>הנתונים אינם הוכחה לעמידה במגבלות מסחר. המערכת לא שולחת פקודות בשלב זה.</p></section>
+{% endif %}
 {% else %}
 <section><h2>מצב שמור</h2>
 <p><strong>{{'עצירת חירום פעילה' if status.stopped else ('הרשאת דמו פעילה' if status.enabled else 'הרשאת דמו כבויה')}}</strong></p>

@@ -5,11 +5,13 @@ Base: `Rafaeldavid006/paper-trading-agent` main at
 
 This is development work on a draft PR, not a deployment or an activated trader.
 The authenticated research app now includes a Hebrew `/paper` status/control screen.
-`create_app(..., paper_adapter=None)` defaults to no adapter: the screen reports
-unconfigured and cannot enable anything. `serve.py`, `wsgi.py`, and the research
-workers do not construct or configure an adapter. No account was contacted and no
-paper or real order was sent during development. No credentials were read,
-created, or configured. There is no strategy, order-submission HTTP endpoint,
+`create_app(..., paper_adapter=None)` still defaults to no adapter. Production
+`wsgi.py` now explicitly injects a SEPARATE read-only connection, not the execution
+adapter. It consumes existing server-held ALPACA_API_KEY/ALPACA_SECRET_KEY values
+inside the server only and stores its snapshot at /var/data/paper-readonly.sqlite.
+No credentials are retrieved/displayed through tooling or stored in the snapshot.
+Local development/tests use mocks exclusively. The separately approved deployment
+performs one bounded read-only Paper probe per worker startup; no order is sent. There is no strategy, order-submission HTTP endpoint,
 AI-text-to-order conversion, environment-variable activation, or live toggle.
 
 ## Included
@@ -56,9 +58,10 @@ AI-text-to-order conversion, environment-variable activation, or live toggle.
 
 ## Verification and future activation prerequisites
 
-Nothing here authorizes activating orders. Before any separately approved paper
-trial, securely provide paper-only credentials, independently verify the paper
-account ID, review the exact intent and allowlist, and run read-only preflight.
+Production is structurally read-only, irrespective of the user's broader demo
+trading approval. Before any separately specified paper trial, independently
+verify the account identity, review exact instruments/entry/exit conditions and
+allowlist, and complete a separately reviewed execution configuration.
 The code requires an active USD account with recognized multiplier 1, 2 or 4,
 zero short market value, and no account/trading blocks. Margin capability alone
 no longer fails the check. It does NOT authorize borrowing: negative cash,
@@ -88,8 +91,9 @@ while a stop/cancellation is underway; losses can exceed the daily threshold.
 A failed stop call must not be represented as successful: database locks or I/O
 errors can prevent persistence. Strict sell gating may require manual operator
 risk management. Cancellation of external/unmanaged orders is not implemented.
-The new dashboard control shows persistent permission/stop state and unresolved
-intent count, but is not deployed. Cancellation remains a library-only operation,
+The execution-capable dashboard control was deployed initially without an
+adapter; the production read-only connection now selects a separate read-only
+view instead. The execution library still has persistent permission/stop state. Cancellation remains a library-only operation,
 not a website endpoint. The screen clearly says existing orders are NOT canceled
 and positions are NOT liquidated by pressing stop.
 
@@ -152,8 +156,9 @@ control/UI tests), plus compilation. Visual browser QA was NOT completed: local
 browser startup lacked socket permission and the supported cloud browser rejected
 local-file previews. No security warning was bypassed. Rendered mock HTML states
 were produced and Flask test-client navigation/control tests passed; these do not
-replace screenshots or an actual browser-layout check. No actual account/transport
-integration test, deployment or strategy validation was performed.
+replace screenshots or an actual browser-layout check. At that phase, no actual account/transport integration test, deployment or
+strategy validation was performed. Subsequent production read-only deployment
+verification is reported separately; it never validates strategy or order execution.
 
 Official API references consulted on 2026-10-18:
 - https://docs.alpaca.markets/us/docs/paper-trading
@@ -162,3 +167,48 @@ Official API references consulted on 2026-10-18:
 These documents explain paper isolation, client order lookup, partial fills and
 cancellation behavior. Reading them is not verification of this account or an
 end-to-end broker integration test. No profitability claim is made.
+
+
+## Production read-only account connection
+
+`paper_readonly.py` provides an independent `ReadOnlyPaperHTTP` boundary. It
+rejects every method except GET, every request body and every endpoint except
+account, positions, clock and bounded open-orders listing. It wraps the original
+fixed-host HTTPS transport with redirects and proxies refused. The production
+connection has no submit method; its enable method always rejects, and cancellation
+is forbidden. Trading capability and permission always return false.
+
+`wsgi.py` calls its factory once during worker startup. The factory consumes only
+the already-authorized existing server environment keys. There is no new secret,
+new environment setting, new resource or billing change. Missing credentials or
+storage leave connection unavailable; authentication errors stop the check without
+retry or changing credentials. Each startup probe is at most four GET requests;
+there is no recurring scheduler or order probe. Startup logs contain only fixed
+mode/result codes, never balances, positions, account identity, request bodies,
+headers, secret values or raw provider/exception text. A startup result of
+`connected_identity_unverified` proves a successful read on the fixed Paper API,
+NOT that the owner has verified the intended account or approved a strategy.
+
+The first successful read stores a private SHA-256 account-ID fingerprint plus
+only a masked identity suffix. A later different fingerprint blocks the snapshot;
+it never silently adopts a new account. Full account ID/number are neither stored
+nor displayed; short identifiers are fully masked. The SQLite file is restricted
+to owner-only mode 0600 and database symlinks are refused. The authenticated UI shows the masked suffix and explicitly asks
+the owner to match it against Alpaca; it never marks identity verified automatically.
+The first read does not set the execution adapter's expected account identity.
+
+An authenticated CSRF-protected check refreshes balances, holdings and open orders.
+GET navigation reads only the local snapshot, with a timestamp and stale-data
+warning after 30 seconds. Snapshot fields are allowlisted; raw provider payloads
+and order IDs are not stored or rendered. Interrupted checks invalidate prior
+success before I/O. Malformed responses and incomplete/truncated listings fail closed. Account data is shown only through the existing authenticated screen,
+never via a new public endpoint or startup logs. Read-only data can include
+positions that would fail execution risk checks; connection success is not trading
+readiness. The UI contains no activation or cancellation form in this mode.
+
+Local verification after this change: 165 unit tests pass, including 14 new
+read-only tests. They cover the independent write barrier, identity discovery/
+change, sanitized logs, server factory wiring, auth/CSRF, stale/error/interrupted
+reads, snapshot allowlisting, and absence of production execution capability.
+No actual account credentials are used in local tests. Live startup connectivity
+and public deployment checks must be verified separately after approved deployment.
