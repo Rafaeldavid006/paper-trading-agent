@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>מחקר אירועים · אביעד</title><link rel="stylesheet" href="{{url_for('static',filename='research.css')}}"></head>
+<body><header><a href="/">המחקר של אביעד</a><span class="badge">מחקר בלבד</span></header>
+<main><p class="muted">אירועים, השפעות ישירות ועקיפות וראיות לבדיקה. אין ביצוע עסקאות.</p>
+{% for message in get_flashed_messages() %}<p class="notice" role="status">{{message}}</p>{% endfor %}
+{% if mode=='index' %}
+<h1>מה השתנה, ועל מי זה עשוי להשפיע?</h1>
+<section><h2>מצב המערכת</h2><div class="grid">
+<div><strong>חדשות</strong><p>{{'מפתחות הוגדרו; החיבור טרם אומת כאן' if news_configured else 'טרם הוגדר חיבור'}}</p></div>
+<div><strong>ניתוח AI</strong><p>{{'מפתחות ומודל הוגדרו' if ai_configured else 'טרם הוגדר חיבור'}}</p><p>{{'הפעלה ידנית זמינה' if ai_enabled else 'הפעלה כבויה'}}</p></div>
+<div><strong>שמירת מידע</strong><p>{{'הוגדר אישור אחסון מתמשך; לא נבדק מול השרת' if persistent else 'טרם אושר אחסון מתמשך'}}</p></div></div>
+<p>איסוף מהעמוד מתבצע בלחיצה. ניטור רציף דורש תהליך שרץ בנפרד.</p>
+<form action="/collect" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>איסוף חדשות עכשיו</button></form>
+{% for h in health %}<p><b>{{h.source}}</b> · {{h.status}}<br><small>הצלחה אחרונה UTC: {{h.last_success or 'אין'}} · ניסיון אחרון: {{h.last_attempt}}</small></p>{% else %}<p class="muted">טרם בוצע איסוף.</p>{% endfor %}</section>
+<h2>אירועים אחרונים</h2>
+{% for event in events %}<article><span class="badge">{{event.symbol}}</span><h3>{{event.headline}}</h3>
+<p>מקור: {{event.source}} · {{'סומן כמקור ראשוני בקלט' if event.verified_primary else 'האירוע טרם אומת מול מקור ראשוני'}}</p>
+<small>פרסום UTC: {{event.published_at}}<br>קליטה UTC: {{event.received_at}}</small>
+<p><a href="{{url_for('discover',version=event.version_id)}}">חקירת האירוע באינטרנט ומקורות</a></p>
+{% if event.url.startswith('https://') %}<p><a href="{{event.url}}" target="_blank" rel="noopener noreferrer">פתיחת המקור</a></p>{% endif %}
+<form action="{{url_for('prepare',version=event.version_id)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}">
+<label>סוג האירוע למחקר — בחירה ראשונית, אינה אימות<select name="event_types">{% for t in types %}<option value="{{t}}" {{'selected' if t=='unknown' else ''}}>{{type_labels[t]}}</option>{% endfor %}</select></label><button>הכנת מחקר ללא קריאת AI</button></form></article>
+{% else %}<section><h3>עדיין אין אירועים</h3><p>לאחר הגדרת החיבור, איסוף החדשות יציג כאן מידע אמיתי. לא מוצגים נתוני דוגמה כאילו היו חיים.</p></section>{% endfor %}
+{% elif mode=='discovery' %}
+<h1>חקירת אירוע · {{symbol}}</h1>
+<p>החיפוש בוחן מקורות, השפעות ישירות ועקיפות, טיעוני נגד ומידע חסר. הוא אינו מאמת אוטומטית כל טענה ואינו שולח עסקאות.</p>
+{% if discovery %}<section><h2>מצב: {{discovery.state}}</h2><p>מועד התחלה UTC: {{discovery.created_at}}</p>
+{% if discovery.superseded %}<p class="notice">המחקר מיושן: התקבל תיקון לאירוע.</p>{% endif %}
+{% if discovery.state=='failed' %}<p>המחקר נכשל או שהפלט לא עמד בבדיקות. לא תישלח בקשה נוספת אוטומטית לגרסה זו.</p>{% endif %}
+{% if discovery.state=='searching' %}<p>בקשה נרשמה. רענן לצפייה בתוצאה. אם התהליך נקטע, אין ניסיון חוזר אוטומטי.</p>{% endif %}
+{% if discovery.report %}{% for section in discovery.report.sections %}<article><pre>{{section.text}}</pre><p>מקורות שהוחזרו כהפניות לניתוח:</p>{% for cite in section.citations %}<p><a href="{{cite.url}}" target="_blank" rel="noopener noreferrer">{{cite.title}}</a></p>{% endfor %}</article>{% endfor %}
+<details><summary>כל המקורות שהחזיר כלי החיפוש</summary>{% for src in discovery.report.sources %}<p><a href="{{src.url}}" target="_blank" rel="noopener noreferrer">{{src.title}}</a></p>{% endfor %}</details>
+<p>המקורות אותרו בזמן המחקר. אין להסיק שהיו ידועים בזמן פרסום האירוע. תאריכי המקורות והקשרים הכלכליים לא אומתו בנפרד.</p>{% endif %}</section>
+{% elif discovery_enabled %}<section><h2>הפעלת חיפוש ומחקר</h2><p>הפעולה משתמשת ב־AI ובכלי חיפוש ועלולה לחייב לפי השימוש. המכסה היומית משותפת לניתוח ולחיפוש, אך אינה תקרת חיוב כספית.</p>
+<form action="{{url_for('discover',version=event_version)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>חיפוש מקורות וחקירת השפעות</button></form></section>
+{% else %}<section>החיפוש טרם הופעל בהגדרות השירות.</section>{% endif %}
+{% else %}
+<h1>מחקר על {{run.packet.event.symbol}}</h1>
+<p>מצב: {{run.state}} · {{'מיושן — התקבל תיקון למקור' if run.superseded else 'אין גרסה חדשה יותר במאגר'}}</p>
+<section><h2>האירוע</h2><pre>{{run.packet.graph.event_text}}</pre><p>האירוע והסיווג טרם אומתו. קשרים הם השערות המבוססות על קלט שסופק.</p></section>
+<section><h2>מפת ההשפעות</h2>
+{% for b in run.packet.graph.branches %}<article><h3>{{b.target}}</h3><p>{{b.hops}} קשרים מן האירוע · כיוון ההשפעה טרם נקבע</p>
+{% for e in b.path %}<p>{{e.origin}} {{relation_labels[e.relation]}} {{e.target}}<br><a href="{{e.url}}" rel="noopener noreferrer" target="_blank">{{e.title}}</a><br><small>{{e.excerpt}}</small></p>{% endfor %}</article>
+{% else %}<p>אין עדיין קשרים מבוססי מקורות למחקר הזה. ניתוח AI חסום עד להוספת ראיה.</p>{% endfor %}
+<h3>שאלות לבדיקה</h3><ul>{% for q in run.packet.graph.research_brief.questions %}<li>{{q}}</li>{% endfor %}</ul></section>
+{% if run.review %}<section><h2>ניתוח AI</h2><p>{{run.review.summary_he}}</p>
+{% for s in run.review.scenarios %}<article><h3>{{s.target}}</h3><p>{{s.conditional_effect}}</p><p><b>טיעון נגד:</b> {{s.strongest_counterargument}}</p><p><b>מה יפריך:</b> {{s.invalidation_condition}}</p><p><b>מידע חסר:</b> {{s.missing_evidence|join(' · ')}}</p></article>{% endfor %}
+<h3>משימות מחקר</h3><ul>{% for t in run.review.research_tasks %}<li>{{t}}</li>{% endfor %}</ul></section>{% endif %}
+{% if ai_enabled and run.state=='prepared' and run.packet.graph.branches and not run.superseded %}<section><h2>ניתוח לפי בקשה</h2><p>הלחיצה שולחת את חבילת המקורות לשירות AI ועלולה לחייב בתשלום לפי השימוש. קיימת מכסת בקשות יומית; היא אינה תקרת חיוב כספית.</p><form action="{{url_for('review',run_id=run.id)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>הפעלת ניתוח AI</button></form></section>{% endif %}
+{% if not run.superseded %}<details><summary>הוספת קשר ומקור למחקר</summary><p>המערכת שומרת את הקטע שסיפקת; היא אינה קוראת או מאמתת את הקישור בעצמה.</p>
+<form action="{{url_for('evidence',run_id=run.id)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}">
+<label>החברה או הגורם המושפע<input name="target" required maxlength="100"></label>
+<label>סוג הקשר<select name="relation">{% for r in relations %}<option value="{{r}}">{{relation_labels[r]}}</option>{% endfor %}</select></label>
+<label>קישור HTTPS למקור<input name="source_url" type="url" required dir="ltr"></label>
+<label>כותרת המקור<input name="title" required maxlength="300"></label>
+<label>זמן פרסום עם אזור זמן, לדוגמה 2026-10-17T18:00:00Z<input name="published_at" required dir="ltr"></label>
+<label>קטע רלוונטי מן המקור<textarea name="excerpt" required maxlength="10000" rows="5"></textarea></label><button>שמירת השערת קשר והכנת מחקר מעודכן</button></form></details>{% endif %}
+{% endif %}
+<footer>גרסת פיתוח · ניתוח מחקרי אינו תחזית מאומתת או אישור מסחר.</footer></main></body></html>
