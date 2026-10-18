@@ -27,7 +27,7 @@ RELATION_LABELS=dict(buys_from='רוכש מ־',sells_to='מוכר ל־',uses_tec
     exposed_to_rate='חשוף לריבית',exposed_to_currency='חשוף למטבע',regulated_by='מפוקח בידי',
     operates_in='פועל באזור',depends_on_logistics='תלוי בנתיב אספקה',uses_commodity='משתמש בחומר גלם')
 
-def create_app(store=None, analyst=None, collector=None, discovery_transport=None,price_transport=None):
+def create_app(store=None, analyst=None, collector=None, discovery_transport=None,price_transport=None,data_check_transport=None):
     app=Flask(__name__)
     app.secret_key=os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
     app.config.update(MAX_CONTENT_LENGTH=32768,SESSION_COOKIE_HTTPONLY=True,
@@ -141,7 +141,18 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
             news_configured=configured,ai_configured=bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL')),
             persistent=os.environ.get('PERSISTENT_STORAGE_CONFIRMED')=='true',
             auto_research=os.environ.get('ENABLE_AUTO_RESEARCH')=='true',
-            daily_limit=limit(),watchlist=os.environ.get('WATCHLIST','SPY,QQQ'))
+            daily_limit=limit(),watchlist=os.environ.get('WATCHLIST','SPY,QQQ'),
+            market_check=reactions.last_check())
+
+    @app.post('/market-data-check')
+    @protected
+    def market_data_check():
+        try:
+            reactions.check_connection(data_check_transport)
+            flash('בדיקת מקור המחיר הושלמה. התוצאה מוצגת במצב המערכת.')
+        except ValueError:
+            flash('הבדיקה לא הופעלה: הגדרת מקור המחיר אינה תקינה.')
+        return redirect(url_for('index'))
 
     @app.post('/reaction/<version>')
     @protected
