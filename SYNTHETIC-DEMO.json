@@ -1,0 +1,118 @@
+{
+  "as_of": "2026-10-01T00:00:00.000000+00:00",
+  "entity": "Demo Quantum",
+  "event_text": "FICTIONAL: a proposed investment was announced. No real politician, company or funding claim is represented.",
+  "event_verified": false,
+  "synthetic_mode": true,
+  "branches": [
+    {
+      "target": "Demo Cooling",
+      "hops": 1,
+      "path": [
+        {
+          "id": "101e0fdb373eb364088d2668c784fe4d783a2c6789157da3fb256ec6cfa482d0",
+          "origin": "Demo Quantum",
+          "target": "Demo Cooling",
+          "relation": "buys_from",
+          "evidence_id": "be71f0e27f8ef1e5882e6cb67c7acffa3d66e43f4d5ec6fd7a5fe6f77fb29aa9",
+          "status": "reported",
+          "valid_from": "2026-10-01T00:00:00.000000+00:00",
+          "valid_until": null,
+          "recorded_at": "2026-10-01T00:00:00.000000+00:00",
+          "materiality": "unknown",
+          "url": "https://example.org/fictional-relationship-1",
+          "title": "SYNTHETIC supplier relationship",
+          "excerpt": "FICTIONAL: Demo Quantum uses Demo Cooling for its laboratory cryogenic equipment.",
+          "synthetic": 1,
+          "published_at": "2026-09-30T00:00:00.000000+00:00"
+        }
+      ],
+      "status": "reported_relationship_research_candidate",
+      "direction": "undetermined_until_event_and_economics_verified",
+      "questions": [
+        "Does the announcement create binding incremental spend, and when?",
+        "Does this specific technology require this input or service?",
+        "Is this supplier actually contracted, or could another supplier win?",
+        "How material is the incremental revenue and profit to this company?",
+        "Can it supply the demand without offsetting capital costs or dilution?",
+        "Is the entity publicly investable, and which instrument represents it?",
+        "Has price already reacted, at executable bid/ask after analysis latency?"
+      ],
+      "counterarguments": [
+        "Budget may be nonbinding or already committed.",
+        "Supply relationship does not establish incremental orders.",
+        "Additional revenue may not create material profit.",
+        "The indirect beneficiary may already be priced for the event."
+      ],
+      "execution": "blocked_no_valuation_of_event_or_market_execution_evidence"
+    },
+    {
+      "target": "Demo Components",
+      "hops": 2,
+      "path": [
+        {
+          "id": "101e0fdb373eb364088d2668c784fe4d783a2c6789157da3fb256ec6cfa482d0",
+          "origin": "Demo Quantum",
+          "target": "Demo Cooling",
+          "relation": "buys_from",
+          "evidence_id": "be71f0e27f8ef1e5882e6cb67c7acffa3d66e43f4d5ec6fd7a5fe6f77fb29aa9",
+          "status": "reported",
+          "valid_from": "2026-10-01T00:00:00.000000+00:00",
+          "valid_until": null,
+          "recorded_at": "2026-10-01T00:00:00.000000+00:00",
+          "materiality": "unknown",
+          "url": "https://example.org/fictional-relationship-1",
+          "title": "SYNTHETIC supplier relationship",
+          "excerpt": "FICTIONAL: Demo Quantum uses Demo Cooling for its laboratory cryogenic equipment.",
+          "synthetic": 1,
+          "published_at": "2026-09-30T00:00:00.000000+00:00"
+        },
+        {
+          "id": "2afc176f0138a680cbcb9adfd7afe12be46f68ba4513bf0884dd05ec0caace9f",
+          "origin": "Demo Cooling",
+          "target": "Demo Components",
+          "relation": "buys_from",
+          "evidence_id": "b521321c9b62935d0d84aa26be101f91f91dc1ff9442f733d6c2f816afa73020",
+          "status": "reported",
+          "valid_from": "2026-10-01T00:00:00.000000+00:00",
+          "valid_until": null,
+          "recorded_at": "2026-10-01T00:00:00.000000+00:00",
+          "materiality": "unknown",
+          "url": "https://example.org/fictional-relationship-2",
+          "title": "SYNTHETIC second-order relationship",
+          "excerpt": "FICTIONAL: Demo Cooling buys components from Demo Components. Volumes and margins unknown.",
+          "synthetic": 1,
+          "published_at": "2026-09-30T00:00:00.000000+00:00"
+        }
+      ],
+      "status": "reported_relationship_research_candidate",
+      "direction": "undetermined_until_event_and_economics_verified",
+      "questions": [
+        "Does the announcement create binding incremental spend, and when?",
+        "Does this specific technology require this input or service?",
+        "Is this supplier actually contracted, or could another supplier win?",
+        "How material is the incremental revenue and profit to this company?",
+        "Can it supply the demand without offsetting capital costs or dilution?",
+        "Is the entity publicly investable, and which instrument represents it?",
+        "Has price already reacted, at executable bid/ask after analysis latency?"
+      ],
+      "counterarguments": [
+        "Budget may be nonbinding or already committed.",
+        "Supply relationship does not establish incremental orders.",
+        "Additional revenue may not create material profit.",
+        "The indirect beneficiary may already be priced for the event."
+      ],
+      "execution": "blocked_no_valuation_of_event_or_market_execution_evidence"
+    }
+  ],
+  "order_permission": "none",
+  "limitations": [
+    "The input event text has not been independently verified.",
+    "Reported means a supplied document describes a relationship, not that the kernel independently authenticated it.",
+    "No profitability, materiality, market data or public listing has been established.",
+    "No cross-source semantic deduplication or automatic entity resolution."
+  ],
+  "next_questions": [],
+  "run_id": "2609f7803096f0338d95b95abcacceb461b11cce8f69fea99c6c034ca50d4264",
+  "label": "SYNTHETIC DEMO — NOT MARKET RESEARCH"
+}
