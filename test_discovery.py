@@ -47,9 +47,10 @@ class DiscoveryTests(unittest.TestCase):
         r=response();r['output'][1]['content'][0]['annotations']=[]
         with self.assertRaises(ValueError):extract_report(r)
 
-    def test_fabricated_citation_rejected(self):
+    def test_structured_citation_without_inventory_accepted(self):
         r=response();r['output'][1]['content'][0]['annotations'][0]['url']='https://invented.org/'
-        with self.assertRaises(ValueError):extract_report(r)
+        report=extract_report(r)
+        self.assertEqual(report['sections'][0]['citations'][0]['provenance'],'api_url_citation')
 
     def test_incomplete_response_rejected(self):
         r=response();r['status']='incomplete'
@@ -76,6 +77,23 @@ class DiscoveryTests(unittest.TestCase):
         result=self.d.run(self.v,transport=fail);self.d.run(self.v,transport=fail)
         self.assertEqual(calls,[1]);self.assertEqual(result['state'],'failed')
         self.assertNotIn('secret',result['error'])
+
+    def test_citation_retry_is_manual_once_and_preserves_budget(self):
+        self.d.run(self.v,transport=lambda _:response())
+        with self.s.db() as c:
+            c.execute("UPDATE discovery_runs SET state='failed',report=NULL,error='citation_inventory_mismatch_no_automatic_retry'")
+        calls=[]
+        def transport(_):calls.append(1);return response()
+        self.d.run(self.v,transport=transport)
+        self.assertEqual(calls,[])
+        with self.assertRaisesRegex(ValueError,'daily AI'):
+            self.d.run(self.v,transport=transport,retry=True,max_daily_calls=1)
+        result=self.d.run(self.v,transport=transport,retry=True)
+        self.assertEqual(result['state'],'completed')
+        self.d.run(self.v,transport=transport,retry=True)
+        self.assertEqual(calls,[1])
+        with self.s.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM ai_attempts').fetchone()[0],2)
 
     def test_new_revision_supersedes_report(self):
         self.d.run(self.v,transport=lambda _:response())
