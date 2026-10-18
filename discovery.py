@@ -59,9 +59,12 @@ def extract_report(response):
             citations=[]
             for ann in content.get('annotations',[]):
                 if ann.get('type')=='url_citation' and safe_url(ann.get('url')):
-                    # Only link citations present in the tool's returned source inventory.
-                    if ann['url'] not in sources:raise ValueError('citation absent from searched sources')
-                    citations.append(sources[ann['url']])
+                    # Structured API citations are a separate provenance source.
+                    # Never promote URLs parsed from narrative text into citations.
+                    citation={'url':ann['url'],'title':ann.get('title') or ann['url'],
+                              'provenance':'api_url_citation'}
+                    sources.setdefault(ann['url'],citation)
+                    citations.append(citation)
             if text.strip():sections.append({'text':text,'citations':citations})
     if not sections or not any(s['citations'] for s in sections):raise ValueError('cited report required')
     return {'sections':sections,'sources':list(sources.values()),'search_calls':len(searches),
@@ -126,9 +129,12 @@ class Discovery:
                 ORDER BY updated_at DESC,rowid DESC LIMIT 1''',(version,)).fetchone()
         result['report']=json.loads(result['report']) if result['report'] else None
         result['superseded']=not latest or latest['version_id']!=version
+        result['can_retry']=(result['state']=='failed' and not result['superseded']
+            and result['error']=='citation_inventory_mismatch_no_automatic_retry'
+            and not result['id'].endswith(':retry1'))
         return result
 
-    def run(self,version,*,transport=None,max_daily_calls=5):
+    def run(self,version,*,transport=None,max_daily_calls=5,retry=False):
         if type(max_daily_calls) is not int or not 1<=max_daily_calls<=100:raise ValueError('invalid daily limit')
         # Check credentials before claiming any paid attempt, including test transports.
         if not os.environ.get('OPENAI_API_KEY') or not os.environ.get('OPENAI_MODEL'):
@@ -144,12 +150,20 @@ class Discovery:
                 (event['source'],event['source_id'])).fetchone()['version_id']
             if latest!=version:raise ValueError('superseded event')
             if max(utc(event[x]) for x in ('published_at','updated_at','received_at'))>utc(stamp):raise ValueError('future event')
-            prior=c.execute('SELECT id FROM discovery_runs WHERE event_version=?',(version,)).fetchone()
-            if prior:claimed=False
+            prior=c.execute('SELECT * FROM discovery_runs WHERE event_version=?',(version,)).fetchone()
+            retry_allowed=(retry and prior and prior['state']=='failed'
+                and prior['error']=='citation_inventory_mismatch_no_automatic_retry'
+                and not prior['id'].endswith(':retry1'))
+            if prior and not retry_allowed:claimed=False
             else:
                 used=c.execute('SELECT COUNT(*) FROM ai_attempts WHERE substr(requested_at,1,10)=?',(stamp[:10],)).fetchone()[0]
                 if used>=max_daily_calls:raise ValueError('daily AI request limit reached')
-                c.execute('INSERT INTO discovery_runs VALUES (?,?,?,?,?,?)',(run_id,version,stamp,'searching',None,None))
+                if retry_allowed:
+                    run_id += ':retry1'
+                    c.execute("UPDATE discovery_runs SET id=?,created_at=?,state='searching',report=NULL,error=NULL WHERE event_version=?",
+                              (run_id,stamp,version))
+                else:
+                    c.execute('INSERT INTO discovery_runs VALUES (?,?,?,?,?,?)',(run_id,version,stamp,'searching',None,None))
                 c.execute('INSERT INTO ai_attempts VALUES (?,?)',(run_id,stamp));claimed=True
         if not claimed:return self.get(version)
         try:
