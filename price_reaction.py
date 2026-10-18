@@ -55,13 +55,13 @@ def summarize(event_at, observed_at, bars):
     return result
 
 
-def fetch_bars(symbol, start, end, feed):
-    if not re.fullmatch(r'[A-Z][A-Z0-9.-]{0,11}', symbol) or feed not in ('iex', 'sip'):
+def fetch_bars(symbol, start, end, feed, timeframe='1Min'):
+    if not re.fullmatch(r'[A-Z][A-Z0-9.-]{0,11}', symbol) or feed not in ('iex', 'sip') or timeframe not in ('1Min','1Day'):
         raise ValueError('invalid market data request')
     key, secret = os.environ.get('ALPACA_API_KEY'), os.environ.get('ALPACA_SECRET_KEY')
     if not key or not secret:
         raise ValueError('missing market data credentials')
-    params = dict(start=iso(start), end=iso(end), timeframe='1Min', limit=1000,
+    params = dict(start=iso(start), end=iso(end), timeframe=timeframe, limit=1000,
                   adjustment='raw', feed=feed, sort='asc', asof='-')
     req = urllib.request.Request('https://data.alpaca.markets/v2/stocks/' + symbol + '/bars?' +
         urllib.parse.urlencode(params), headers={'APCA-API-KEY-ID':key, 'APCA-API-SECRET-KEY':secret})
@@ -87,6 +87,45 @@ class Reactions:
                 id INTEGER PRIMARY KEY, event_version TEXT, requested_at TEXT,
                 received_at TEXT, feed TEXT, report TEXT, raw_bars TEXT)''')
             c.execute('CREATE INDEX IF NOT EXISTS reactions_event ON price_reactions(event_version,id)')
+            c.execute('CREATE TABLE IF NOT EXISTS market_data_checks(id INTEGER PRIMARY KEY,requested_at TEXT,report TEXT)')
+
+    def last_check(self):
+        with self.store.db() as c:
+            row=c.execute('SELECT * FROM market_data_checks ORDER BY id DESC LIMIT 1').fetchone()
+        if not row:return None
+        result=dict(row);result['report']=json.loads(result['report'])
+        return result
+
+    def check_connection(self,transport=None):
+        now=utc(self.store.clock());previous=self.last_check()
+        feed=os.environ.get('PRICE_DATA_FEED','iex').lower()
+        if feed not in ('iex','sip'):raise ValueError('invalid price feed')
+        if previous and previous['report'].get('feed')==feed and (now-utc(previous['requested_at'])).total_seconds()<300:
+            return previous
+        end=now.replace(hour=0,minute=0,second=0,microsecond=0)
+        start=end-timedelta(days=10)
+        report={'symbol':'AAPL','feed':feed,'timeframe':'1Day','order_permission':'none',
+                'live_data_verified':False,'historical_only':True,'start':iso(start),'end':iso(end)}
+        try:
+            bars=(transport or fetch_bars)('AAPL',start,end,feed,'1Day')
+            if not isinstance(bars,list) or len(bars)>1000:raise ValueError('invalid bars')
+            valid=[]
+            for bar in bars:
+                at=utc(bar['t']);close=finite(bar['c'])
+                if close<=0:raise ValueError('invalid close')
+                if start<=at and at+timedelta(days=1)<=end:
+                    valid.append({'bar_at':iso(at),'close':close})
+            valid.sort(key=lambda b:b['bar_at'])
+            report.update(status='historical_data_ok' if valid else 'no_historical_bars',
+                          bars_count=len(valid),last_bar=valid[-1] if valid else None)
+        except urllib.error.HTTPError as exc:
+            report['status']='provider_http_'+str(int(exc.code))
+        except Exception:
+            report['status']='data_error'
+        with self.store.db() as c:
+            c.execute('INSERT INTO market_data_checks(requested_at,report) VALUES (?,?)',
+                      (iso(now),json.dumps(report)))
+        return self.last_check()
 
     def latest(self, version):
         with self.store.db() as c:
