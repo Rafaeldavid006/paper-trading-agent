@@ -16,6 +16,7 @@ from discovery import Discovery
 from triage import screen
 from price_reaction import Reactions
 from dashboard_auth import DashboardAuth
+from paper_adapter import SafetyError
 
 TYPE_LABELS=dict(earnings='דוחות ותחזיות',merger='מיזוגים ורכישות',financing='גיוס ומימון',
     investment_contract='השקעות וחוזים',monetary_policy='ריבית ומדיניות מוניטרית',
@@ -27,7 +28,7 @@ RELATION_LABELS=dict(buys_from='רוכש מ־',sells_to='מוכר ל־',uses_tec
     exposed_to_rate='חשוף לריבית',exposed_to_currency='חשוף למטבע',regulated_by='מפוקח בידי',
     operates_in='פועל באזור',depends_on_logistics='תלוי בנתיב אספקה',uses_commodity='משתמש בחומר גלם')
 
-def create_app(store=None, analyst=None, collector=None, discovery_transport=None,price_transport=None,data_check_transport=None):
+def create_app(store=None, analyst=None, collector=None, discovery_transport=None,price_transport=None,data_check_transport=None,paper_adapter=None):
     app=Flask(__name__)
     app.secret_key=os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
     app.config.update(MAX_CONTENT_LENGTH=32768,SESSION_COOKIE_HTTPONLY=True,
@@ -111,6 +112,56 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
         login_state.revoke(session.get('login_token'))
         session.clear()
         return redirect(url_for('login'))
+
+    @app.get('/paper')
+    @protected
+    def paper_status():
+        # A page view only reads local state. Never resolve credentials here.
+        status = paper_adapter.control_status() if paper_adapter is not None else None
+        return render_template('paper.html', status=status)
+
+    @app.post('/paper/check')
+    @protected
+    def paper_check():
+        if paper_adapter is None:
+            flash('חיבור הדמו טרם הוגדר. אין להזין מפתחות גישה במסך זה.')
+        else:
+            try:
+                result = paper_adapter.check_connection()
+                flash('בדיקת הדמו הצליחה. לא נשלחה פקודת מסחר.' if result['check_ok'] else
+                      'הבדיקה לא אישרה הפעלה. ההרשאה כבויה; יש לבדוק חיבור, מזומן, מגבלות ופקודות פתוחות.')
+            except Exception:
+                flash('לא ניתן לאמת את המצב המקומי. אין אישור להפעלה; נדרשת בדיקה של האחסון והחיבור.')
+        return redirect(url_for('paper_status'), code=303)
+
+    @app.post('/paper/enable')
+    @protected
+    def paper_enable():
+        if paper_adapter is None:
+            abort(409)
+        if request.form.get('confirm') != 'yes':
+            abort(400)
+        try:
+            revision = int(request.form.get('revision', ''))
+            paper_adapter.enable(revision=revision, resume=request.form.get('resume') == 'yes')
+            flash('הרשאת הדמו הופעלה. אין כאן אסטרטגיה או מסלול לשליחת פקודות מהאתר.')
+        except (SafetyError, ValueError):
+            flash('ההפעלה לא בוצעה. רענן, בדוק את החיבור שוב וודא שאין פקודות לא פתורות. עצירה קיימת אינה מתבטלת ללא אישור מפורש.')
+        except Exception:
+            flash('ההפעלה לא אושרה עקב תקלה. יש לבדוק את המצב השמור לפני פעולה נוספת.')
+        return redirect(url_for('paper_status'), code=303)
+
+    @app.post('/paper/stop')
+    @protected
+    def paper_stop():
+        if paper_adapter is None:
+            abort(409)
+        try:
+            paper_adapter.stop()  # Local kill latch only; no broker writes from this screen.
+            flash('העצירה נשמרה. פקודות חדשות חסומות. פקודות קיימות לא בוטלו ופוזיציות לא נסגרו.')
+        except Exception:
+            flash('לא ניתן לאשר שהעצירה נשמרה. נדרשת בדיקה מיידית של המערכת; אין להניח שפקודות נחסמו.')
+        return redirect(url_for('paper_status'), code=303)
 
     @app.context_processor
     def context():

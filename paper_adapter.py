@@ -1,4 +1,4 @@
-"""Isolated, opt-in Alpaca paper execution. Never imported by the web service.
+"""Opt-in Alpaca paper execution with persistent, authenticated UI controls.
 
 No environment configuration, strategy, or AI-text parser. Monetary arithmetic
 uses Decimal; only whole-share, regular-session, day limit orders are supported.
@@ -108,7 +108,126 @@ class PaperAdapter:
             CREATE TABLE IF NOT EXISTS cancellation (id INTEGER PRIMARY KEY, broker_id TEXT NOT NULL,
                 created REAL NOT NULL, outcome TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS loss_days (day TEXT PRIMARY KEY, stopped INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS paper_control (
+                id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0,
+                revision INTEGER NOT NULL DEFAULT 0, binding TEXT,
+                checked_at REAL, check_ok INTEGER NOT NULL DEFAULT 0,
+                summary TEXT NOT NULL DEFAULT '{}');
+            INSERT OR IGNORE INTO paper_control(id) VALUES(1);
+            CREATE TABLE IF NOT EXISTS control_audit (
+                id INTEGER PRIMARY KEY, created REAL NOT NULL, action TEXT NOT NULL);
             ''')
+
+    def _binding(self):
+        return hashlib.sha256(json.dumps([self.expected_account_id, sorted(self.allowlist)]).encode()).hexdigest()
+
+    def _control_event(self, c, action):
+        c.execute('INSERT INTO control_audit(created,action) VALUES(?,?)', (self.now().timestamp(), action))
+
+    def control_status(self):
+        # Local state only: navigation and refresh never contact the broker.
+        with self.db() as c:
+            state = dict(c.execute('SELECT * FROM paper_control WHERE id=1').fetchone())
+            state['stopped'] = bool(c.execute('SELECT stopped FROM safety WHERE id=1').fetchone()[0])
+            state['unresolved'] = c.execute("SELECT COUNT(*) FROM intents WHERE state IN ('reserved','uncertain')").fetchone()[0]
+        state['summary'] = json.loads(state['summary'])
+        age = None if state['checked_at'] is None else self.now().timestamp() - state['checked_at']
+        state['checked_at_iso'] = None if state['checked_at'] is None else datetime.fromtimestamp(state['checked_at'], timezone.utc).isoformat()
+        state['fresh'] = age is not None and 0 <= age <= 30
+        state['configured'] = bool(self.expected_account_id and self.allowlist)
+        state['capable'] = self.enabled
+        state['check_ok'] = bool(state['check_ok'] and state['fresh'] and state['binding'] == self._binding())
+        state['enabled'] = bool(state['enabled'] and not state['stopped'] and self.enabled and state['binding'] == self._binding())
+        # Never expose the account ID or binding even to the template.
+        state.pop('binding')
+        return state
+
+    def _ready(self, c, snapshot):
+        account, positions, orders, clock = snapshot
+        day = datetime.fromisoformat(clock['timestamp'].replace('Z', '+00:00')).astimezone(ZoneInfo('America/New_York')).date().isoformat()
+        if money(account['last_equity']) - money(account['equity']) >= 1000:
+            c.execute('INSERT OR REPLACE INTO loss_days VALUES(?,1)', (day,))
+            raise SafetyError('Daily loss limit reached')
+        if c.execute('SELECT 1 FROM loss_days WHERE day=?', (day,)).fetchone():
+            raise SafetyError('Daily loss stop is latched')
+
+        rows = c.execute('SELECT * FROM intents').fetchall()
+        if orders or any(row['state'] not in TERMINAL for row in rows):
+            raise SafetyError('All existing orders must be resolved before enabling')
+        values = {}
+        for position in positions:
+            symbol = position['symbol']
+            values[symbol] = values.get(symbol, Decimal(0)) + money(position['market_value'])
+        if any(v > 5000 for v in values.values()) or sum(values.values()) > 20000:
+            raise SafetyError('Existing exposure exceeds limits')
+
+    def check_connection(self):
+        # Broker GETs only. Failure removes persistent permission and stale data.
+        # Catch/provider text is intentionally not stored, returned or logged.
+        with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute("UPDATE paper_control SET enabled=0,check_ok=0,summary='{}',revision=revision+1 WHERE id=1")
+            self._control_event(c, 'check_started')
+            started_revision = c.execute('SELECT revision FROM paper_control WHERE id=1').fetchone()[0]
+            c.commit()  # Interruption/provider crash must leave execution disabled.
+            c.execute('BEGIN IMMEDIATE')
+            if c.execute('SELECT revision FROM paper_control WHERE id=1').fetchone()[0] != started_revision:
+                raise SafetyError('Connection check was superseded by a newer control action')
+            try:
+                self._reconcile(c)
+                snapshot = self.preflight()
+                a, positions, orders, clock = snapshot
+                summary = dict(cash=str(money(a['cash'])), equity=str(money(a['equity'])),
+                               market_open=clock['is_open'] is True, positions=len(positions), open_orders=len(orders))
+                self._ready(c, snapshot)
+                if not self.allowlist:
+                    raise SafetyError('Allowlist required')
+            except Exception:
+                c.execute("UPDATE paper_control SET enabled=0,check_ok=0,checked_at=?,summary='{}',revision=revision+1 WHERE id=1", (self.now().timestamp(),))
+                self._control_event(c, 'check_failed')
+            else:
+                c.execute('UPDATE paper_control SET enabled=0,checked_at=?,check_ok=1,summary=?,binding=?,revision=revision+1 WHERE id=1',
+                          (self.now().timestamp(), json.dumps(summary), self._binding()))
+                self._control_event(c, 'check_passed')
+        return self.control_status()
+
+    def enable(self, *, revision, resume=False):
+        if not self.enabled:
+            raise SafetyError('Paper control capability is disabled')
+        succeeded = False
+        with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            state = c.execute('SELECT * FROM paper_control WHERE id=1').fetchone()
+            stopped = c.execute('SELECT stopped FROM safety WHERE id=1').fetchone()[0]
+            # Stale forms, replayed requests and an unacknowledged kill latch fail closed.
+            age = None if state['checked_at'] is None else self.now().timestamp() - state['checked_at']
+            if (type(revision) is not int or revision != state['revision'] or not state['check_ok']
+                    or age is None or not 0 <= age <= 30 or state['binding'] != self._binding()
+                    or (stopped and resume is not True)):
+                raise SafetyError('Fresh check and explicit current confirmation required')
+            c.execute('UPDATE paper_control SET enabled=0,check_ok=0,revision=revision+1 WHERE id=1')
+            self._control_event(c, 'enable_started')
+            c.commit()
+            c.execute('BEGIN IMMEDIATE')
+            current = c.execute('SELECT revision FROM paper_control WHERE id=1').fetchone()[0]
+            if current != revision + 1:
+                raise SafetyError('Control state changed during enable request')
+            try:
+                self._reconcile(c)
+                self._ready(c, self.preflight())
+                if not self.allowlist:
+                    raise SafetyError('Allowlist required')
+            except Exception:
+                c.execute("UPDATE paper_control SET enabled=0,check_ok=0,summary='{}',revision=revision+1 WHERE id=1")
+                self._control_event(c, 'enable_failed')
+            else:
+                c.execute('UPDATE safety SET stopped=0 WHERE id=1')
+                c.execute('UPDATE paper_control SET enabled=1,check_ok=1,revision=revision+1 WHERE id=1')
+                self._control_event(c, 'enabled')
+                succeeded = True
+        if not succeeded:
+            raise SafetyError('Fresh account checks failed; execution remains disabled')
+        return self.control_status()
 
     @contextmanager
     def db(self):
@@ -135,10 +254,13 @@ class PaperAdapter:
             raise SafetyError('Account is not active USD')
         if any(account.get(k) is not False for k in ('trading_blocked', 'account_blocked', 'trade_suspended_by_user')):
             raise SafetyError('Account block state missing or blocked')
-        if money(account['multiplier']) != 1 or money(account['short_market_value']) != 0:
-            raise SafetyError('Leverage or short exposure is forbidden')
+        if money(account['multiplier']) not in (1, 2, 4) or money(account['short_market_value']) != 0:
+            raise SafetyError('Unsupported account multiplier or short exposure')
         for key in ('cash', 'equity', 'last_equity', 'long_market_value'):
             money(account[key])
+        # Margin capability is not permission to borrow. Ignore buying_power.
+        if money(account['long_market_value']) > money(account['equity']):
+            raise SafetyError('Existing holdings exceed equity; borrowing is forbidden')
         positions = self._get('/v2/positions')
         orders = self._get('/v2/orders?status=open&limit=500&nested=false')
         if not isinstance(positions, list) or not isinstance(orders, list) or len(orders) >= 500:
@@ -147,6 +269,8 @@ class PaperAdapter:
             if p.get('asset_class') != 'us_equity' or p.get('side') != 'long':
                 raise SafetyError('Non-equity or short position')
             money(p['qty']); money(p['market_value'])
+        if sum(money(p['market_value']) for p in positions) > money(account['equity']):
+            raise SafetyError('Position exposure exceeds equity')
         clock = self._get('/v2/clock')
         stamp = datetime.fromisoformat(clock['timestamp'].replace('Z', '+00:00'))
         age = (self.now() - stamp).total_seconds()
@@ -176,15 +300,18 @@ class PaperAdapter:
         """Look up every nonterminal durable intent. A 404 is NOT permission to retry."""
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
-            for row in c.execute('SELECT * FROM intents').fetchall():
-                if row['state'] in TERMINAL:
-                    continue
-                status, order = self.transport.call('GET', '/v2/orders:by_client_order_id?client_order_id=' + row['client_id'])
-                if status == 200:
-                    self._record(c, row, order)
-                else:
-                    c.execute("UPDATE intents SET state='uncertain' WHERE client_id=?", (row['client_id'],))
+            self._reconcile(c)
         return self.records()
+
+    def _reconcile(self, c):
+        for row in c.execute('SELECT * FROM intents').fetchall():
+            if row['state'] in TERMINAL:
+                continue
+            status, order = self.transport.call('GET', '/v2/orders:by_client_order_id?client_order_id=' + row['client_id'])
+            if status == 200:
+                self._record(c, row, order)
+            else:
+                c.execute("UPDATE intents SET state='uncertain' WHERE client_id=?", (row['client_id'],))
 
     def records(self):
         with self.db() as c:
@@ -215,6 +342,9 @@ class PaperAdapter:
                 if prior['payload'] != encoded:
                     raise SafetyError('Idempotency key reused with different intent')
                 return dict(prior)  # Never POST twice, even after rejection or 404.
+            control = c.execute('SELECT * FROM paper_control WHERE id=1').fetchone()
+            if not control['enabled'] or control['binding'] != self._binding():
+                raise SafetyError('Persistent permission is disabled or configuration changed')
             if c.execute('SELECT stopped FROM safety').fetchone()[0]:
                 raise SafetyError('Persistent kill switch is on')
             rows = c.execute('SELECT * FROM intents').fetchall()
@@ -281,8 +411,9 @@ class PaperAdapter:
                 # Serialize stop against the last gate AND transmission. The
                 # durable reservation above survives failure of this transaction.
                 c.execute('BEGIN IMMEDIATE')
-                if c.execute('SELECT stopped FROM safety').fetchone()[0]:
-                    raise SafetyError('Kill switch activated before transmission')
+                control = c.execute('SELECT * FROM paper_control WHERE id=1').fetchone()
+                if c.execute('SELECT stopped FROM safety').fetchone()[0] or not control['enabled'] or control['binding'] != self._binding():
+                    raise SafetyError('Stop or permission change before transmission')
                 status, order = self.transport.call('POST', '/v2/orders', payload)
                 row = c.execute('SELECT * FROM intents WHERE client_id=?', (cid,)).fetchone()
                 if status == 200 or status == 201:
@@ -298,7 +429,10 @@ class PaperAdapter:
     def stop(self, *, cancel_open=False):
         """Persist stop first. Cancellation is explicit, never liquidation."""
         with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
             c.execute('UPDATE safety SET stopped=1')
+            c.execute('UPDATE paper_control SET enabled=0,revision=revision+1 WHERE id=1')
+            self._control_event(c, 'stopped')
         if not cancel_open:
             return []
         if not self.enabled:

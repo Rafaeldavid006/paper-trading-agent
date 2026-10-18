@@ -3,12 +3,14 @@
 Base: `Rafaeldavid006/paper-trading-agent` main at
 `a55a2e984f11c5e328a1dc03fb51ad643fb1670d`.
 
-This is a local development deliverable, not a deployment or an activated trader.
-`paper_adapter.py` is not imported or invoked by `serve.py`, `wsgi.py`, `app.py`,
-`webapp.py`, the research workers, or AI outputs. No account was contacted and no
-paper or real order was sent. No credentials were read, created, or configured.
-There is no CLI, environment-variable activation, live toggle, scheduler, strategy,
-AI-text-to-order conversion, or dashboard stop button in this isolated MVP.
+This is development work on a draft PR, not a deployment or an activated trader.
+The authenticated research app now includes a Hebrew `/paper` status/control screen.
+`create_app(..., paper_adapter=None)` defaults to no adapter: the screen reports
+unconfigured and cannot enable anything. `serve.py`, `wsgi.py`, and the research
+workers do not construct or configure an adapter. No account was contacted and no
+paper or real order was sent during development. No credentials were read,
+created, or configured. There is no strategy, order-submission HTTP endpoint,
+AI-text-to-order conversion, environment-variable activation, or live toggle.
 
 ## Included
 
@@ -19,7 +21,9 @@ AI-text-to-order conversion, or dashboard stop button in this isolated MVP.
   environment or logged. Creating a transport sends nothing.
 - `PaperAdapter`: defaults to `enabled=False`, empty symbol allowlist, and no
   verified account identity. Broker read-only `preflight()` works while disabled;
-  `submit()` and cancellation cannot transmit writes while disabled.
+  `submit()` and cancellation cannot transmit writes while process capability is
+  disabled. Submission additionally requires persistent explicit enable permission
+  bound to the verified account and symbol allowlist.
 - Explicit immutable `Intent` inputs, whole shares, buy or sell, regular-session
   day limit orders, minimum $1 price and cent precision. Stocks only, no options,
   crypto, shorting, fractional shares, market orders, leverage, or extended hours.
@@ -47,17 +51,20 @@ AI-text-to-order conversion, or dashboard stop button in this isolated MVP.
   order. Cancellation audits distinguish requested versus uncertain, and unknown
   submission identities are returned as unresolved. HTTP 204 means requested,
   NOT verified canceled; `reconcile()` must establish final status/partial fills.
-  No automatic reset/resume operation is provided.
+  Resume requires an explicit current confirmation after a successful check; the
+  UI adds a separate acknowledgement for clearing an existing kill latch.
 
 ## Verification and future activation prerequisites
 
 Nothing here authorizes activating orders. Before any separately approved paper
 trial, securely provide paper-only credentials, independently verify the paper
 account ID, review the exact intent and allowlist, and run read-only preflight.
-The code requires an active USD account with multiplier exactly 1, zero short
-market value, and no account/trading blocks. A default margin-enabled paper
-account may fail this intentionally strict check; this deliverable does not
-change account settings or assume permission to do so.
+The code requires an active USD account with recognized multiplier 1, 2 or 4,
+zero short market value, and no account/trading blocks. Margin capability alone
+no longer fails the check. It does NOT authorize borrowing: negative cash,
+long market value above equity, or position values above equity are rejected.
+Buy reservations and new buys must fit actual cash; inflated margin buying power
+is ignored. This does not change any account settings.
 
 Use a dedicated account with no manual/external trades or cash transfers and ONE
 shared durable local database for all adapter processes. External concurrent
@@ -81,8 +88,47 @@ while a stop/cancellation is underway; losses can exceed the daily threshold.
 A failed stop call must not be represented as successful: database locks or I/O
 errors can prevent persistence. Strict sell gating may require manual operator
 risk management. Cancellation of external/unmanaged orders is not implemented.
-A future dashboard control must show persistent stop state and unresolved orders;
-this deliverable does not modify the running site's UI.
+The new dashboard control shows persistent permission/stop state and unresolved
+intent count, but is not deployed. Cancellation remains a library-only operation,
+not a website endpoint. The screen clearly says existing orders are NOT canceled
+and positions are NOT liquidated by pressing stop.
+
+## Authenticated control screen
+
+Routes: `GET /paper`, `POST /paper/check`, `POST /paper/enable`, and
+`POST /paper/stop`. All reuse existing server-revocable dashboard authentication;
+POSTs require the session CSRF token. No credential input fields, account IDs,
+provider exception text or secret transport headers are rendered. Existing secure,
+HttpOnly/SameSite cookies, no-store headers and CSP remain unchanged. A navigation
+link is added to the research dashboard. No change to its existing research flow.
+
+- GET reads local state only; refresh, back and repeated navigation cannot contact
+  the broker, enable anything, or mutate the broker account.
+- Check first durably disables execution permission and invalidates prior check
+  state, BEFORE broker GETs. Success leaves permission disabled. Exceptions and
+  process interruption cannot preserve an old enable permission. A revision check
+  prevents an older operation from overwriting a newer explicit control action.
+- Enable requires explicit acknowledgement, a current form revision, and a
+  successful check no older than 30 seconds. It performs fresh broker GETs again.
+  No open or unresolved orders are allowed at enable time. Lost/stale sessions,
+  replayed forms, stale broker clocks, loss latch, configuration mismatch and
+  failed checks block activation. Enable also durably disables before provider
+  reads so interruption cannot leave prior permission behind.
+- Stop is a durable, repeat-safe local kill latch. It does not call cancellation,
+  liquidation or order submission. A separate explicit resume checkbox is required
+  before the backend can release an existing stop; restart/check cannot release it.
+- Persisted permissions are not a running strategy: no worker invokes `submit()`.
+  Process capability defaults off. A future separately approved deployment must
+  inject an authorized adapter and retain the same database. An account or
+  allowlist change cannot inherit an old enable permission.
+- Daily loss observed in a valid account snapshot is latched before other
+  readiness blockers, including existing open orders. Failure to store local
+  state is reported as unconfirmed, never as a successful stop.
+
+The UI intentionally does not expose a cancellation action in this phase. That
+would transmit broker write requests. Its explanatory text distinguishes a
+cancellation request from confirmed cancellation and mentions unknown/partial-fill
+outcomes. Account setup remains a separate secure step.
 
 ## Tests (no broker network or credentials)
 
@@ -90,13 +136,24 @@ From the repository root:
 
     python -m pip install -r requirements.txt
     python -m unittest discover -v
-    python -m unittest test_paper_adapter -v
-    python -m py_compile paper_adapter.py test_paper_adapter.py
+    python -m unittest test_paper_adapter test_paper_controls -v
+    python -m py_compile paper_adapter.py webapp.py test_paper_adapter.py test_paper_controls.py
 
 The existing README refers to `-s tests`, but this pinned repository has its tests
 at the root. New module uses only Python's standard library. Test fixture keys and
 account IDs are dummy strings. Tests inject `MockPaper`; HTTP behavior tests mock
-the opener and do not contact a broker. Threaded tests check stop/transmit locking.
+the opener and do not contact a broker. Threaded tests check stop/transmit locking. Control/UI tests cover authentication,
+CSRF, stale checks/forms, interrupted checks/enable, persistent stop/resume,
+configuration changes, unknown orders, margin-capable cash-only behavior,
+read-only navigation, expired sessions, repeated POSTs and no secret/error leaks.
+
+Phase-two verification: 151 tests pass (100 original, 26 adapter tests, 25 new
+control/UI tests), plus compilation. Visual browser QA was NOT completed: local
+browser startup lacked socket permission and the supported cloud browser rejected
+local-file previews. No security warning was bypassed. Rendered mock HTML states
+were produced and Flask test-client navigation/control tests passed; these do not
+replace screenshots or an actual browser-layout check. No actual account/transport
+integration test, deployment or strategy validation was performed.
 
 Official API references consulted on 2026-10-18:
 - https://docs.alpaca.markets/us/docs/paper-trading

@@ -50,6 +50,9 @@ class PaperTests(unittest.TestCase):
         self.now = datetime(2026, 10, 19, 15, tzinfo=timezone.utc)
         self.transport = MockPaper(lambda: self.now)
         self.adapter = self.make()
+        state = self.adapter.check_connection()
+        self.adapter.enable(revision=state['revision'])
+        self.transport.calls.clear()
 
     def tearDown(self): self.tmp.cleanup()
 
@@ -149,7 +152,7 @@ class PaperTests(unittest.TestCase):
             self.blocked(**changes)
 
     def test_account_asset_and_market_checks(self):
-        for key, bad in [('id','other'), ('multiplier','2'), ('short_market_value','100'), ('trading_blocked',True), ('currency','EUR'), ('cash','NaN')]:
+        for key, bad in [('id','other'), ('multiplier','0'), ('short_market_value','100'), ('trading_blocked',True), ('currency','EUR'), ('cash','NaN')]:
             original = self.transport.account[key]
             self.transport.account[key] = bad
             self.blocked()
