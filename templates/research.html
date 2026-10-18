@@ -22,6 +22,19 @@
 <small>פרסום UTC: {{event.published_at}}<br>קליטה UTC: {{event.received_at}}</small>
 <p><a href="{{url_for('discover',version=event.version_id)}}">חקירת האירוע באינטרנט ומקורות</a></p>
 {% if event.url.startswith('https://') %}<p><a href="{{event.url}}" target="_blank" rel="noopener noreferrer">פתיחת המקור</a></p>{% endif %}
+<details><summary>תגובת המחיר לאירוע</summary>
+<p>מדידה היסטורית בנרות של דקה. אינה מחיר זמין למסחר או הוכחה שהאירוע גרם לשינוי.</p>
+{% if event.reaction %}{% set r=event.reaction.report %}
+<p>מצב: <bdi>{{r.status}}</bdi> · מקור: <bdi>{{r.feed|upper}}</bdi> · {{'נתוני בורסה יחידה, אינם כלל השוק' if not r.consolidated else 'נתונים מאוחדים'}}</p>
+<small>המדידה התקבלה UTC: {{event.reaction.received_at}}<br>הנתונים נחתכו ב־UTC: {{r.data_cutoff}}</small>
+{% if r.baseline %}<p>סגירת נר לפני האירוע: {{r.baseline.close}} דולר · UTC {{r.baseline.end}}</p>{% endif %}
+{% if r.latest %}<p>שינוי עד הנר האחרון בחלון: <bdi>{{'%+.2f'|format(r.latest.change_pct)}}%</bdi> · UTC {{r.latest.end}} · גיל הנתון בעת הבקשה: {{r.latest.age_at_request_seconds|int}} שניות</p>{% endif %}
+{% for h in r.horizons or [] %}<p>לאחר {{h.minutes}} דקות: {% if h.change_pct is not none %}<bdi>{{'%+.2f'|format(h.change_pct)}}%</bdi>{% else %}{{'טרם הגיע מועד המדידה' if h.status=='pending' else 'אין מספיק נתונים'}}{% endif %}</p>{% endfor %}
+{% if r.status=='no_baseline' %}<p>לא נמצא נר שהושלם עד חמש דקות לפני האירוע. לא מחושב שינוי ביחס למחיר ישן.</p>{% endif %}
+{% else %}<p>טרם נשמרה מדידת מחיר לאירוע.</p>{% endif %}
+<form action="{{url_for('reaction',version=event.version_id)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>מדידת תגובת מחיר</button></form>
+<p class="muted">רענון לכל היותר פעם בחמש דקות לכל אירוע. מקור ברירת המחדל IEX; לא בוצעה רכישת מנוי נתונים. אין אימות מצב מסחר, עצירה, מרווח או פעולה תאגידית.</p>
+</details>
 <form action="{{url_for('prepare',version=event.version_id)}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}">
 <label>סוג האירוע למחקר — בחירה ראשונית, אינה אימות<select name="event_types">{% for t in types %}<option value="{{t}}" {{'selected' if t=='unknown' else ''}}>{{type_labels[t]}}</option>{% endfor %}</select></label><button>הכנת מחקר ללא קריאת AI</button></form></article>
 {% else %}<section><h3>עדיין אין אירועים</h3><p>לאחר הגדרת החיבור, איסוף החדשות יציג כאן מידע אמיתי. לא מוצגים נתוני דוגמה כאילו היו חיים.</p></section>{% endfor %}
