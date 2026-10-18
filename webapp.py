@@ -128,7 +128,8 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
         else:
             try:
                 result = paper_adapter.check_connection()
-                flash('בדיקת הדמו הצליחה. לא נשלחה פקודת מסחר.' if result['check_ok'] else
+                flash('קריאת חשבון Paper הצליחה. זהות החשבון עדיין טעונה אישור; מסחר אינו זמין בחיבור זה.' if result.get('readonly') and result['check_ok'] else
+                      'בדיקת הדמו הצליחה. לא נשלחה פקודת מסחר.' if result['check_ok'] else
                       'הבדיקה לא אישרה הפעלה. ההרשאה כבויה; יש לבדוק חיבור, מזומן, מגבלות ופקודות פתוחות.')
             except Exception:
                 flash('לא ניתן לאמת את המצב המקומי. אין אישור להפעלה; נדרשת בדיקה של האחסון והחיבור.')
