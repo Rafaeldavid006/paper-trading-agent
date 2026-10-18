@@ -73,6 +73,9 @@ class ReadOnlyPaperConnection:
                 ok INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT 'not_checked',
                 snapshot TEXT NOT NULL DEFAULT '{}', stopped INTEGER NOT NULL DEFAULT 0)''')
             c.execute('INSERT OR IGNORE INTO paper_readonly(id) VALUES(1)')
+            if 'identity_first_seen' not in {r[1] for r in c.execute('PRAGMA table_info(paper_readonly)')}:
+                c.execute('ALTER TABLE paper_readonly ADD COLUMN identity_first_seen REAL')
+                c.execute('UPDATE paper_readonly SET identity_first_seen=checked_at WHERE fingerprint IS NOT NULL')
 
     @contextmanager
     def db(self):
@@ -139,18 +142,23 @@ class ReadOnlyPaperConnection:
                 reason, snapshot = 'identity_changed', {}
             success = reason == 'connected_identity_unverified'
             c.execute('''UPDATE paper_readonly SET ok=?,reason=?,checked_at=?,snapshot=?,
-                fingerprint=COALESCE(fingerprint,?),masked_identity=COALESCE(masked_identity,?) WHERE id=1''',
+                fingerprint=COALESCE(fingerprint,?),masked_identity=COALESCE(masked_identity,?),identity_first_seen=COALESCE(identity_first_seen,?) WHERE id=1''',
                       (int(success), reason, self.now().timestamp(), json.dumps(snapshot if success else {}),
-                       fingerprint if success else None, masked if success else None))
+                       fingerprint if success else None, masked if success else None, self.now().timestamp() if success else None))
         return self.control_status()
 
     def control_status(self):
         with self.db() as c:
             row = dict(c.execute('SELECT * FROM paper_readonly WHERE id=1').fetchone())
+        experiment=None
+        with self.db() as c:
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_experiment'").fetchone():
+                exp=c.execute('SELECT phase,reason,next_open FROM paper_experiment WHERE id=1').fetchone()
+                if exp:experiment=dict(exp)
         stamp = row['checked_at']
         age = None if stamp is None else self.now().timestamp()-stamp
         fresh = age is not None and 0 <= age <= 30
-        return dict(readonly=True, capable=False, enabled=False, stopped=bool(row['stopped']),
+        return dict(experiment=experiment, readonly=True, capable=False, enabled=False, stopped=bool(row['stopped']),
                     revision=row['revision'], checked_at=stamp,
                     checked_at_iso=None if stamp is None else datetime.fromtimestamp(stamp,timezone.utc).isoformat(),
                     check_ok=bool(row['ok'] and fresh), last_check_ok=bool(row['ok']), fresh=fresh,
