@@ -13,6 +13,7 @@ from pipeline import Pipeline
 from monitor import tick
 from discovery import Discovery
 from triage import screen
+from price_reaction import Reactions
 
 TYPE_LABELS=dict(earnings='דוחות ותחזיות',merger='מיזוגים ורכישות',financing='גיוס ומימון',
     investment_contract='השקעות וחוזים',monetary_policy='ריבית ומדיניות מוניטרית',
@@ -24,7 +25,7 @@ RELATION_LABELS=dict(buys_from='רוכש מ־',sells_to='מוכר ל־',uses_tec
     exposed_to_rate='חשוף לריבית',exposed_to_currency='חשוף למטבע',regulated_by='מפוקח בידי',
     operates_in='פועל באזור',depends_on_logistics='תלוי בנתיב אספקה',uses_commodity='משתמש בחומר גלם')
 
-def create_app(store=None, analyst=None, collector=None, discovery_transport=None):
+def create_app(store=None, analyst=None, collector=None, discovery_transport=None,price_transport=None):
     app=Flask(__name__)
     app.secret_key=os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
     app.config.update(MAX_CONTENT_LENGTH=32768,SESSION_COOKIE_HTTPONLY=True,
@@ -35,6 +36,7 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
     store=store or Store(db_path)
     pipeline=Pipeline(store)
     discovery=Discovery(store)
+    reactions=Reactions(store)
     app.extensions['research_pipeline']=pipeline
 
     def protected(fn):
@@ -90,12 +92,23 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
             payload=json.loads(event['payload'])
             event['headline']=payload.get('headline',event['symbol']) if isinstance(payload,dict) else event['symbol']
             event['screening']=screen(event)
+            event['reaction']=reactions.latest(event['version_id'])
         configured=bool(os.environ.get('ALPACA_API_KEY') and os.environ.get('ALPACA_SECRET_KEY'))
         return render_template('research.html',mode='index',events=events,health=health,
             news_configured=configured,ai_configured=bool(os.environ.get('OPENAI_API_KEY') and os.environ.get('OPENAI_MODEL')),
             persistent=os.environ.get('PERSISTENT_STORAGE_CONFIRMED')=='true',
             auto_research=os.environ.get('ENABLE_AUTO_RESEARCH')=='true',
             daily_limit=limit(),watchlist=os.environ.get('WATCHLIST','SPY,QQQ'))
+
+    @app.post('/reaction/<version>')
+    @protected
+    def reaction(version):
+        try:
+            reactions.measure(version,price_transport)
+            flash('מדידת המחיר נשמרה. הנתונים והחוסרים מוצגים ליד האירוע.')
+        except ValueError:
+            flash('המדידה לא הופעלה: בדוק את האירוע והגדרות מקור המחיר.')
+        return redirect(url_for('index'))
 
     @app.post('/collect')
     @protected
