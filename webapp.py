@@ -123,7 +123,8 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
         if request.method=='POST':
             if os.environ.get('ENABLE_WEB_RESEARCH','false').lower()!='true':abort(403)
             try:
-                discovery.run(version,transport=discovery_transport,max_daily_calls=limit())
+                discovery.run(version,transport=discovery_transport,max_daily_calls=limit(),
+                              retry=request.form.get('retry')=='1')
             except ValueError:
                 flash('החיפוש לא הופעל. בדוק הגדרות חיבור, מכסת בקשות וגרסת אירוע.')
             return redirect(url_for('discover',version=version))
