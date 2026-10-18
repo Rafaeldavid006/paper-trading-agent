@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime,timezone,timedelta
 from unittest.mock import patch
-from discovery import Discovery,extract_report,safe_url
+from discovery import Discovery,extract_report,safe_url,failure_code
 from event_core import Store
 from research_worker import cycle
 from pipeline import Pipeline
@@ -30,6 +30,14 @@ class DiscoveryTests(unittest.TestCase):
 
     def ingest(self):return self.s.ingest(source='fixture',source_id='1',symbol='AAA',
         published_at=self.now,updated_at=self.now,url='https://example.org/event',payload={'headline':'test'})[0]
+
+    def test_failure_codes_do_not_expose_provider_secrets(self):
+        from urllib.error import HTTPError, URLError
+        self.assertEqual(failure_code(HTTPError('https://secret',429,'secret',{},None)), 'provider_http_429')
+        self.assertEqual(failure_code(URLError('secret')), 'provider_connection_failed')
+        self.assertEqual(failure_code(TimeoutError('secret')), 'provider_timeout')
+        self.assertEqual(failure_code(ValueError('citation absent from searched sources')), 'citation_inventory_mismatch')
+        self.assertEqual(failure_code(RuntimeError('secret')), 'unexpected_research_error')
 
     def test_real_tool_inventory_required(self):
         r=response();r['output']=r['output'][1:]
