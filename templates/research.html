@@ -12,6 +12,14 @@
 <div><strong>מחקר AI באינטרנט</strong><p>{{'מפתחות ומודל הוגדרו' if ai_configured else 'טרם הוגדר חיבור'}}</p><p>{{'חיפוש זמין' if discovery_enabled else 'חיפוש כבוי'}}</p><p>{{'מחקר אוטומטי הוגדר' if auto_research and discovery_enabled else 'מחקר אוטומטי כבוי'}}</p></div>
 <div><strong>שמירת מידע</strong><p>{{'הוגדר אישור אחסון מתמשך; לא נבדק מול השרת' if persistent else 'טרם אושר אחסון מתמשך'}}</p></div></div>
 <p>רשימת מעקב: <bdi>{{watchlist}}</bdi>. מכסה: {{daily_limit}} ניסיונות AI ביום, כולל ניסיונות שנכשלו. זו אינה תקרת חיוב כספית.</p><p>תהליך הרקע בודק חדשות במחזורים. המחקר האוטומטי בוחר אירועים שפורסמו ב־15 הדקות האחרונות לפי כללי תעדוף ראשוניים; אין כאן זרם נתונים בזמן אמת.</p>
+<details><summary>בדיקת חיבור לנתוני מחיר</summary>
+<p>הבדיקה מבקשת נרות יומיים היסטוריים של AAPL בעשרת הימים הקודמים. אינה מדידת תגובה לאירוע ואינה מאמתת נתונים בזמן אמת.</p>
+{% if market_check %}{% set m=market_check.report %}
+<p>תוצאה: <bdi>{{m.status}}</bdi> · מקור <bdi>{{m.feed|upper}}</bdi></p>
+<small>נבדק ב־UTC: {{market_check.requested_at}}</small>
+{% if m.last_bar %}<p>נמצאו {{m.bars_count}} נרות. סגירה היסטורית אחרונה: <bdi>{{m.last_bar.close}}</bdi> דולר · חותמת הנר UTC: {{m.last_bar.bar_at}}</p>{% endif %}
+{% else %}<p>טרם בוצעה בדיקת מקור מחירים.</p>{% endif %}
+<form action="{{url_for('market_data_check')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>בדיקת חיבור למחירים</button></form></details>
 <form action="/collect" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>איסוף חדשות עכשיו</button></form>
 {% for h in health %}<p><b>{{h.source}}</b> · {{h.status}}<br><small>הצלחה אחרונה UTC: {{h.last_success or 'אין'}} · ניסיון אחרון: {{h.last_attempt}}</small></p>{% else %}<p class="muted">טרם בוצע איסוף.</p>{% endfor %}</section>
 <h2>אירועים אחרונים</h2>
