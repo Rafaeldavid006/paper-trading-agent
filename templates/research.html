@@ -9,13 +9,15 @@
 <h1>מה השתנה, ועל מי זה עשוי להשפיע?</h1>
 <section><h2>מצב המערכת</h2><div class="grid">
 <div><strong>חדשות</strong><p>{{'מפתחות הוגדרו; החיבור טרם אומת כאן' if news_configured else 'טרם הוגדר חיבור'}}</p></div>
-<div><strong>ניתוח AI</strong><p>{{'מפתחות ומודל הוגדרו' if ai_configured else 'טרם הוגדר חיבור'}}</p><p>{{'הפעלה ידנית זמינה' if ai_enabled else 'הפעלה כבויה'}}</p></div>
+<div><strong>מחקר AI באינטרנט</strong><p>{{'מפתחות ומודל הוגדרו' if ai_configured else 'טרם הוגדר חיבור'}}</p><p>{{'חיפוש זמין' if discovery_enabled else 'חיפוש כבוי'}}</p><p>{{'מחקר אוטומטי הוגדר' if auto_research and discovery_enabled else 'מחקר אוטומטי כבוי'}}</p></div>
 <div><strong>שמירת מידע</strong><p>{{'הוגדר אישור אחסון מתמשך; לא נבדק מול השרת' if persistent else 'טרם אושר אחסון מתמשך'}}</p></div></div>
-<p>איסוף מהעמוד מתבצע בלחיצה. ניטור רציף דורש תהליך שרץ בנפרד.</p>
+<p>רשימת מעקב: <bdi>{{watchlist}}</bdi>. מכסה: {{daily_limit}} ניסיונות AI ביום, כולל ניסיונות שנכשלו. זו אינה תקרת חיוב כספית.</p><p>תהליך הרקע בודק חדשות במחזורים. המחקר האוטומטי בוחר אירועים שפורסמו ב־15 הדקות האחרונות לפי כללי תעדוף ראשוניים; אין כאן זרם נתונים בזמן אמת.</p>
 <form action="/collect" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>איסוף חדשות עכשיו</button></form>
 {% for h in health %}<p><b>{{h.source}}</b> · {{h.status}}<br><small>הצלחה אחרונה UTC: {{h.last_success or 'אין'}} · ניסיון אחרון: {{h.last_attempt}}</small></p>{% else %}<p class="muted">טרם בוצע איסוף.</p>{% endfor %}</section>
 <h2>אירועים אחרונים</h2>
 {% for event in events %}<article><span class="badge">{{event.symbol}}</span><h3>{{event.headline}}</h3>
+<p><strong>עדיפות למחקר: {{event.screening.priority}} / 100</strong> · {{'מועמד למחקר אוטומטי אם הוא עדכני' if event.screening.auto_eligible else 'לבדיקה ידנית'}}<br>{{event.screening.reasons|join(' · ')}}</p>
+<p class="muted">תעדוף לפי מילות הכותרת בלבד; אינו תחזית מחיר, הסתברות או אימות האירוע.</p>
 <p>מקור: {{event.source}} · {{'סומן כמקור ראשוני בקלט' if event.verified_primary else 'האירוע טרם אומת מול מקור ראשוני'}}</p>
 <small>פרסום UTC: {{event.published_at}}<br>קליטה UTC: {{event.received_at}}</small>
 <p><a href="{{url_for('discover',version=event.version_id)}}">חקירת האירוע באינטרנט ומקורות</a></p>
