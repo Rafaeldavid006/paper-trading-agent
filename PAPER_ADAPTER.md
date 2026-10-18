@@ -275,3 +275,13 @@ logged: only mode, phase, fixed reason and public market next-open time.
 Tests use injected/mock transports exclusively. Authenticated production UI and real
 order execution are not claimed verified by these tests. Deployment verification
 must separately report sanitized worker status and actual terminal results.
+
+### Unexpected experiment process exit
+
+The supervisor distinguishes a normal terminal worker exit (zero) from an unexpected
+nonzero/signal exit. It reports an abnormal exit once, without restarting the worker
+or changing web/research supervision. Existing nonterminal experiment state becomes
+`manual_attention` / `worker_failed`; all order IDs, fills and uncertain intent records
+are retained. Already terminal outcomes are preserved. If existing storage cannot be
+updated, the sanitized supervisor log reports `attention_recorded=false`; storage is
+never recreated or reset. Intentional service shutdown does not emit this failure alert.

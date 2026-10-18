@@ -1,5 +1,8 @@
 """One-service supervisor: web UI and optional polling/research process share storage."""
 import os
+import json
+import sqlite3
+import time
 from pathlib import Path
 import signal
 import subprocess
@@ -23,11 +26,34 @@ def validate_environment(env):
     return str(path),port
 
 
+
+def record_experiment_failure(exit_code, *, database='/var/data/paper-readonly.sqlite', emit=print):
+    """Make unexpected child death visible without retrying or resetting anything."""
+    recorded=False
+    try:
+        if Path(database).is_symlink() or not Path(database).is_file():
+            raise ValueError('Existing regular state file required')
+        # rw refuses to create missing state. Never seed an approval or a new run.
+        connection=sqlite3.connect(Path(database).absolute().as_uri()+'?mode=rw',uri=True,timeout=15)
+        try:
+            with connection:
+                connection.execute('BEGIN IMMEDIATE')
+                result=connection.execute("""UPDATE paper_experiment
+                    SET phase='manual_attention',reason='worker_failed',updated=?
+                    WHERE id=1 AND phase NOT IN ('completed','no_fill','blocked','manual_attention','stopped')""",(time.time(),))
+                recorded=result.rowcount==1
+        finally:connection.close()
+    except Exception:
+        pass  # Raw exceptions can include private filesystem/provider details.
+    emit(json.dumps(dict(mode='paper_one_shot_supervisor',reason='worker_failed',
+                         exit_code=exit_code,attention_recorded=recorded)),flush=True)
+
+
 def main():
     try:path,port=validate_environment(os.environ)
     except ValueError as exc:
         print(str(exc),file=sys.stderr);return 1
-    stop=threading.Event();children=[];experiment=None
+    stop=threading.Event();children=[];experiment=None;experiment_observed=False
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
@@ -39,6 +65,11 @@ def main():
         experiment=subprocess.Popen([sys.executable,'paper_experiment_worker.py'])
         while not stop.wait(.5):
             if any(child.poll() is not None for child in children):return 1
+            if not experiment_observed:
+                code=experiment.poll()
+                if code is not None:
+                    experiment_observed=True
+                    if code!=0 and not stop.is_set():record_experiment_failure(code)
         return 0
     finally:
         if experiment is not None:children.append(experiment)
