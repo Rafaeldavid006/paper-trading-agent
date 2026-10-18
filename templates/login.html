@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>כניסה · המחקר של אביעד</title>
+<link rel="stylesheet" href="{{url_for('static',filename='research.css')}}"></head>
+<body><main><section><h1>כניסה למחקר של אביעד</h1>
+<p>הזן את סיסמת האתר הקיימת. אין צורך בשם משתמש.</p>
+{% if error %}<p class="notice" role="alert">{{error}}</p>{% endif %}
+<form method="post" action="{{url_for('login')}}">
+<input type="hidden" name="csrf" value="{{csrf}}">
+<label for="password">סיסמת האתר</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+<button type="submit">כניסה</button></form>
+<p class="muted">הכניסה תקפה לארבע שעות. אפשר לצאת בכל עת. אין להזין כאן מפתח API או סיסמת GitHub או Render.</p>
+</section></main></body></html>
