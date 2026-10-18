@@ -35,7 +35,9 @@ class DashboardTests(unittest.TestCase):
         return self.client.post(path,data=data,headers=self.auth,base_url='https://localhost')
 
     def test_login_required(self):
-        self.assertEqual(self.client.get('/').status_code,401)
+        response=self.client.get('/')
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(response.headers['Location'],'/login')
 
     def test_dashboard_escapes_untrusted_news(self):
         r=self.client.get('/',headers=self.auth,base_url='https://localhost')
