@@ -85,6 +85,29 @@ class PersistenceTests(unittest.TestCase):
         self.now=AT+timedelta(minutes=91)
         self.assertIsNone(self.r.follow_up(lambda *_:self.fail('late request')))
 
+    def test_historical_probe_is_separate_from_event_reactions(self):
+        calls=[]
+        def transport(*args):
+            calls.append(args)
+            return [{'t':iso(self.now-timedelta(days=3)),'c':123.45}]
+        result=self.r.check_connection(transport)
+        self.assertEqual(result['report']['status'],'historical_data_ok')
+        self.assertFalse(result['report']['live_data_verified'])
+        self.assertEqual(calls[0][0],'AAPL');self.assertEqual(calls[0][4],'1Day')
+        self.r.check_connection(lambda *_:self.fail('cached'))
+        with self.store.db() as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM price_reactions').fetchone()[0],0)
+
+    def test_probe_rejects_invalid_close_and_preserves_provider_error(self):
+        report=self.r.check_connection(lambda *_:[{'t':iso(self.now-timedelta(days=2)),'c':float('nan')}])
+        self.assertEqual(report['report']['status'],'data_error')
+        self.now+=timedelta(minutes=6)
+        def fail(*_):raise HTTPError('secret',403,'secret',{},None)
+        report=self.r.check_connection(fail)
+        self.assertEqual(report['report']['status'],'provider_http_403')
+        self.assertNotIn('secret',json.dumps(report))
+
+
 
 class RouteTests(unittest.TestCase):
     def test_price_measurement_requires_login_and_csrf_and_renders(self):
@@ -109,4 +132,24 @@ class RouteTests(unittest.TestCase):
             page=client.get('/',headers=auth,base_url='https://localhost')
             self.assertEqual(page.status_code,200)
             self.assertIn(b'+5.00',page.data)
+            self.assertEqual(len(calls),1)
+
+    def test_market_probe_is_authenticated_csrf_protected_and_renders(self):
+        import base64
+        from webapp import create_app
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ,{
+                'DASHBOARD_PASSWORD':'test-password-at-least-20-chars','PRICE_DATA_FEED':'iex'}):
+            store=Store(directory+'/db',lambda:AT+timedelta(minutes=20))
+            calls=[]
+            def transport(*args):calls.append(args);return [{'t':iso(AT-timedelta(days=3)),'c':123.45}]
+            client=create_app(store,data_check_transport=transport).test_client()
+            auth={'Authorization':'Basic '+base64.b64encode(b'user:test-password-at-least-20-chars').decode()}
+            self.assertEqual(client.post('/market-data-check',base_url='https://localhost').status_code,401)
+            self.assertEqual(client.post('/market-data-check',headers=auth,base_url='https://localhost').status_code,403)
+            client.get('/',headers=auth,base_url='https://localhost')
+            with client.session_transaction(base_url='https://localhost') as session:token=session['csrf']
+            self.assertEqual(client.post('/market-data-check',data={'csrf':token},headers=auth,base_url='https://localhost').status_code,302)
+            page=client.get('/',headers=auth,base_url='https://localhost')
+            self.assertIn(b'historical_data_ok',page.data)
+            self.assertIn(b'123.45',page.data)
             self.assertEqual(len(calls),1)
