@@ -1,0 +1,9 @@
+{
+  "verified_date": "2026-10-18",
+  "files": {
+    "global-history-catalog.json": "b020b21b194e7af9e1fa383c1909d523fc90ea7251fcc2e2449ebf9291f2df6f",
+    "historical-case-samples.json": "b2782eb737a565cd94e734b86f6e0b395b0f796993cea693de2dc7ec2ee72c93"
+  },
+  "remote_baseline": "9c12e0497df2f9a1137f9638889b58d9262e5891",
+  "note": "Catalog documentation reviewed; not an ingestion or rights grant."
+}

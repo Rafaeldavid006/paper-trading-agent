@@ -17,6 +17,7 @@ from triage import screen
 from price_reaction import Reactions
 from dashboard_auth import DashboardAuth
 from paper_adapter import SafetyError
+from historical_library import load_snapshot, select_cases, CASE_LABELS, SnapshotUnavailable
 
 TYPE_LABELS=dict(earnings='דוחות ותחזיות',merger='מיזוגים ורכישות',financing='גיוס ומימון',
     investment_contract='השקעות וחוזים',monetary_policy='ריבית ומדיניות מוניטרית',
@@ -112,6 +113,27 @@ def create_app(store=None, analyst=None, collector=None, discovery_transport=Non
         login_state.revoke(session.get('login_token'))
         session.clear()
         return redirect(url_for('login'))
+
+    @app.get('/history')
+    @protected
+    def historical_library():
+        # Local reviewed files only. No broker, collector, model, or API calls.
+        if (len(request.query_string) > 2048 or
+                set(request.args) - {'q', 'domain'} or
+                any(len(request.args.getlist(k)) != 1 for k in request.args)):
+            abort(400)
+        query = request.args.get('q', '')
+        domain = request.args.get('domain', '')
+        domains = sorted({label[1] for label in CASE_LABELS.values()})
+        if len(query) > 120 or len(domain) > 40 or domain not in ['', *domains]:
+            abort(400)
+        try:
+            catalog, pilot = load_snapshot()
+        except SnapshotUnavailable:
+            return render_template('history.html', unavailable=True), 503
+        return render_template('history.html', unavailable=False, catalog=catalog,
+                               pilot=pilot, cases=select_cases(pilot, query, domain),
+                               labels=CASE_LABELS, domains=domains, query=query, domain=domain)
 
     @app.get('/paper')
     @protected
