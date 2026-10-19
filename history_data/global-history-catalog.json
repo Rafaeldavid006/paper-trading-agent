@@ -1,0 +1,415 @@
+{
+  "title": "Global Historical Evidence Source Catalog",
+  "schema_version": "1.0",
+  "last_verified": "2026-10-18",
+  "scope": "No-cost public-source map for bounded world-event and market-history research; not exhaustive world history.",
+  "total_ingested_records": 0,
+  "priority_source_family_count": 8,
+  "review_block_count": 2,
+  "sources": [
+    {
+      "id": "us_original_macro",
+      "name": "BLS, BEA and Federal Reserve original releases",
+      "purpose": "Inflation, labor, GDP, interest rates and crisis policy",
+      "official_urls": [
+        "https://www.bls.gov/developers/api_faqs.htm",
+        "https://www.bls.gov/opub/copyright-information.htm",
+        "https://www.bea.gov/data/gdp/gross-domestic-product",
+        "https://apps.bea.gov/API/docs/index.htm",
+        "https://apps.bea.gov/api/_pdf/bea_web_service_api_user_guide.pdf",
+        "https://www.federalreserve.gov/monetarypolicy/fomc_historical.htm"
+      ],
+      "access": {
+        "cost": "Public sources; no paid subscription required",
+        "key": "BLS unregistered API available; registered access has higher limits. BEA API requires a registered UserID. Public release pages do not require these API keys.",
+        "rate": "BLS unregistered: 25 queries/day, 25 series/query, 10 years/query; registered: 500/day, 50 series/query, 20 years/query; both 50 requests/10 seconds. BEA: 100 requests/minute, 100 MB/minute, 30 errors/minute."
+      },
+      "license": {
+        "summary": "BLS publication material is public domain except previously copyrighted imagery; cite source. Do not generalize this license to every linked Fed/BEA asset; inspect asset notices.",
+        "review_needed": "Asset-specific rights and API terms before implementation."
+      },
+      "coverage": {
+        "geography": "United States",
+        "time": "BEA GDP annual levels since 1929, quarterly since 1947; Fed historical FOMC materials to 1936; BLS start varies by series.",
+        "granularity": "Release documents and selected daily/monthly/quarterly/annual observations"
+      },
+      "limitations": [
+        "Current API histories may be revised. Use dated release archives for historical information sets.",
+        "A transcript released years later was not public at the meeting date.",
+        "Query window limits are not total historical coverage limits."
+      ],
+      "coverage_labels": [
+        "PIT-eligible only with verified public-release timestamp",
+        "Vintage-bounded",
+        "Retrospective context"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "world_bank",
+      "name": "World Bank WDI and Pink Sheet",
+      "purpose": "Global macroeconomic context and commodity prices",
+      "official_urls": [
+        "https://datahelpdesk.worldbank.org/knowledgebase/articles/889392-about-the-indicators-api",
+        "https://datahelpdesk.worldbank.org/knowledgebase/articles/898581-api-basic-call-structures",
+        "https://data.worldbank.org/summary-terms-of-use",
+        "https://www.worldbank.org/en/research/commodity-markets",
+        "https://thedocs.worldbank.org/en/doc/386771467756369668-0050022016/render/CMOHistoricalDataMonthly.pdf"
+      ],
+      "access": {
+        "cost": "No-cost public API and downloads",
+        "key": "Indicators API requires no authentication or API key",
+        "rate": "No numeric request cap verified in inspected documentation; cache and throttle conservatively"
+      },
+      "license": {
+        "summary": "Default CC BY 4.0 with additional terms unless indicator/dataset metadata says otherwise",
+        "review_needed": "Check metadata exceptions and attribution for each dataset"
+      },
+      "coverage": {
+        "geography": "Global; availability varies by economy",
+        "time": "Many indicator series exceed 50 years. Pink Sheet monthly history begins in 1960 for some benchmarks, not all. Linked historical PDF demonstrates coverage rather than latest values.",
+        "granularity": "Mostly annual country indicators; monthly/annual commodity benchmarks"
+      },
+      "limitations": [
+        "Revisions and uneven country reporting; not automatically point-in-time.",
+        "Monthly commodity benchmarks are not intraday tradable or futures-contract prices."
+      ],
+      "coverage_labels": [
+        "Retrospective context",
+        "Vintage-bounded when original release retained"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "bis",
+      "name": "Bank for International Settlements",
+      "purpose": "Global policy rates, credit, banking and financial-cycle context",
+      "official_urls": [
+        "https://stats.bis.org/api-doc/v2/",
+        "https://www.bis.org/statistics/cbpol/cbpol_doc.pdf",
+        "https://www.bis.org/about/legal/permitted-use-statistics",
+        "https://data.bis.org/topics/CBPOL"
+      ],
+      "access": {
+        "cost": "Public portal exports and API; no paid subscription identified",
+        "key": "No required API key identified in inspected public API specification; connector execution not tested",
+        "rate": "No fixed numeric cap verified; BIS may restrict IP access"
+      },
+      "license": {
+        "summary": "Attribution required; commercial inclusion must not impose an additional charge for statistics; no misleading endorsement",
+        "review_needed": "Confirm current permitted-use terms and specific source notices before redistribution"
+      },
+      "coverage": {
+        "geography": "Policy-rate series for more than 40 economies",
+        "time": "Most daily policy-rate series begin after 1980; several economies extend to 1946",
+        "granularity": "Daily/monthly policy rates; other datasets vary"
+      },
+      "limitations": [
+        "Spliced series reflect changes in policy instruments.",
+        "Effective date need not be announcement date.",
+        "Current histories are not a guaranteed vintage archive."
+      ],
+      "coverage_labels": [
+        "Retrospective context",
+        "PIT-eligible only with corroborating contemporary release"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "ucdp",
+      "name": "Uppsala Conflict Data Program",
+      "purpose": "Conflict episodes and organized violence",
+      "official_urls": [
+        "https://ucdp.uu.se/downloads/",
+        "https://ucdp.uu.se/apidocs/index.html"
+      ],
+      "access": {
+        "cost": "Free public dataset downloads and free API",
+        "key": "API requires token requested by email to maintainer; stated review 3–5 working days. No request sent or token created. Public downloads are an alternative.",
+        "rate": "No numeric cap verified; authenticated API introduced to protect service stability"
+      },
+      "license": {
+        "summary": "CC BY 4.0; cite specified dataset publications",
+        "review_needed": "Preserve codebook, citation and dataset version"
+      },
+      "coverage": {
+        "geography": "Global subject to dataset definitions",
+        "time": "Current conflict-year v26.1: 1946–2025; organized-violence event data post-1989. Candidate monthly updates with about one-month lag.",
+        "granularity": "Conflict-year and georeferenced event datasets"
+      },
+      "limitations": [
+        "API access pending user-authorized token setup, not ready for unattended use.",
+        "Retrospective coding and revisions; not contemporaneous market knowledge.",
+        "Defined violence thresholds and source limits mean this is not every violent event."
+      ],
+      "coverage_labels": [
+        "Retrospective context",
+        "Vintage-bounded by dataset release"
+      ],
+      "status": "cataloged_public_downloads_api_token_required",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "gdelt",
+      "name": "GDELT",
+      "purpose": "Discover news-reported world events and contemporary source leads",
+      "official_urls": [
+        "https://gdeltproject.org/data.html",
+        "https://blog.gdeltproject.org/gdelt-2-0-our-global-world-in-realtime/"
+      ],
+      "access": {
+        "cost": "Provider describes database as free/open; external BigQuery compute is not necessarily free",
+        "key": "Public raw-file/analysis routes exist; no key or cloud billing account created",
+        "rate": "No stable universal numeric API cap verified; query-window and endpoint limits must be checked before implementation"
+      },
+      "license": {
+        "summary": "Free/open access claim does not establish rights to underlying news articles",
+        "review_needed": "Verify dataset/endpoint rights and third-party article reuse; no blanket full-text mirroring"
+      },
+      "coverage": {
+        "geography": "Worldwide news reporting, with uneven source/language coverage",
+        "time": "1.0 historical family includes data from 1979. 2.0 launch documentation starts February 19, 2015; announced historical backfill not assumed completed.",
+        "granularity": "Machine-coded events/mentions and other endpoint-specific products"
+      },
+      "limitations": [
+        "Discovery, not ground truth: duplicates, extraction error, language and media-selection bias.",
+        "News counts measure reporting, not necessarily underlying event frequency.",
+        "Do not confuse DOC API search window with full archive coverage.",
+        "No bulk archive download or billable query executed."
+      ],
+      "coverage_labels": [
+        "Discovery-only"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "sec_company",
+      "name": "SEC EDGAR and selected official company archives",
+      "purpose": "Company filings, earnings, mergers, failures and technology announcements",
+      "official_urls": [
+        "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+        "https://www.sec.gov/filergroup/announcements-old/new-rate-control-limits",
+        "https://www.sec.gov/Archives/edgar/data/714154/000071415494000002/0000714154-94-000002-index.html",
+        "https://www.apple.com/newsroom/2007/01/09Apple-Reinvents-the-Phone-with-iPhone/"
+      ],
+      "access": {
+        "cost": "Public filings and selected issuer releases without paid subscription",
+        "key": "SEC data APIs need no authentication or API key",
+        "rate": "SEC ceiling: 10 requests/second; follow declared automated-agent/fair-access requirements. Company sites have separate policies."
+      },
+      "license": {
+        "summary": "Public access does not establish blanket rights to issuer-authored documents or newsroom content",
+        "review_needed": "Use provenance and limited supporting extracts; check document/site rights before broad copying"
+      },
+      "coverage": {
+        "geography": "SEC filers and explicitly selected issuer archives, not all companies worldwide",
+        "time": "Historical coverage varies by issuer/form; verified 1994 Compaq filing and January 9, 2007 Apple announcement. No universal completeness claim.",
+        "granularity": "Filing/document-level; standardized XBRL subset"
+      },
+      "limitations": [
+        "Preserve accession, acceptance time, amendment/version and originally reported values.",
+        "Period end is not public availability time.",
+        "Old acceptance times may lack useful intraday precision.",
+        "Issuer statements are claims; independent corroboration may be needed."
+      ],
+      "coverage_labels": [
+        "PIT-eligible with validated timestamps",
+        "Vintage-bounded"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "federal_register",
+      "name": "Federal Register and GovInfo",
+      "purpose": "Regulatory, trade and technology-policy changes",
+      "official_urls": [
+        "https://www.federalregister.gov/developers/documentation/api/v1",
+        "https://www.federalregister.gov/reader-aids/developer-resources/rest-api",
+        "https://www.govinfo.gov/help/fr"
+      ],
+      "access": {
+        "cost": "Public documents and API documentation without paid subscription",
+        "key": "No account needed for inspected pages; API execution/authentication not independently tested",
+        "rate": "No numeric rate cap verified; use bounded queries"
+      },
+      "license": {
+        "summary": "Government documents publicly accessible; third-party content and marks require separate consideration",
+        "review_needed": "Verify asset-specific rights and authoritative rendition"
+      },
+      "coverage": {
+        "geography": "United States federal government only",
+        "time": "GovInfo modern text/graphics from 1994 forward; earlier digitized volumes use different, often PDF-only structures",
+        "granularity": "Rule, proposed rule, notice and presidential document; historical format varies"
+      },
+      "limitations": [
+        "FederalRegister.gov rendition is informational/unofficial; use linked official GovInfo document.",
+        "Separate announcement/public inspection, publication and effective dates.",
+        "Proposed rules are not final rules.",
+        "No claim of worldwide regulatory coverage or identical old API granularity."
+      ],
+      "coverage_labels": [
+        "PIT-eligible with verified publication evidence",
+        "Vintage-bounded"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    },
+    {
+      "id": "eia",
+      "name": "US Energy Information Administration",
+      "purpose": "Energy supply, inventories and shock transmission",
+      "official_urls": [
+        "https://www.eia.gov/opendata/",
+        "https://www.eia.gov/opendata/documentation.php",
+        "https://www.eia.gov/opendata/faqs.php"
+      ],
+      "access": {
+        "cost": "Free public energy data",
+        "key": "API requires free email-issued key; none requested. Public release/archive pages are available separately.",
+        "rate": "Dynamic throttling depends on key usage, series demand and IP; temporary suspension possible; no single universally safe cap claimed"
+      },
+      "license": {
+        "summary": "EIA directs users to Copyrights and Reuse Policy and API terms",
+        "review_needed": "Check applicable reuse policy and series provenance before implementation"
+      },
+      "coverage": {
+        "geography": "US and selected international energy statistics",
+        "time": "SEDS production/consumption from 1960; prices/expenditures from 1970. Other series vary.",
+        "granularity": "Hourly/daily/monthly/annual depending on dataset"
+      },
+      "limitations": [
+        "API integration awaits authorized key setup.",
+        "Current historical observations may be revised; use original releases for replay.",
+        "Not a comprehensive global supply-chain or market-price database."
+      ],
+      "coverage_labels": [
+        "Retrospective context",
+        "Vintage-bounded",
+        "PIT-eligible only with original-release evidence"
+      ],
+      "status": "cataloged_documentation_verified",
+      "last_verified": "2026-10-18",
+      "ingestion_status": "not_ingested",
+      "ingested_records": 0,
+      "verification_scope": "Official documentation and public archive pages inspected; no production connector or exhaustive retrieval test."
+    }
+  ],
+  "review_blocks": [
+    {
+      "id": "fred_alfred",
+      "status": "rights_review_blocked",
+      "official_urls": [
+        "https://fred.stlouisfed.org/legal/",
+        "https://fred.stlouisfed.org/docs/api/fred/realtime_period.html",
+        "https://fred.stlouisfed.org/docs/api/api_key.html"
+      ],
+      "last_verified": "2026-10-18",
+      "ingested_records": 0,
+      "reason": "Current terms include prohibition on services/content use in development or training of AI systems; do not enable automatic ingestion for this system without rights resolution. Series-specific copyright also applies.",
+      "access": "No-cost but API requires account-issued key. No account or key created.",
+      "potential_value": "Vintage dates can distinguish what was known historically; default requests reflect current knowledge.",
+      "alternative": "Original BLS, BEA and Fed releases; this is not permission to bypass any source restriction."
+    },
+    {
+      "id": "imf",
+      "status": "rights_and_access_review_blocked",
+      "official_urls": [
+        "https://data.imf.org/en/Resource-Pages/IMF-API",
+        "https://www.imf.org/en/About/copyright-and-terms.",
+        "https://www.imf.org/en/data"
+      ],
+      "last_verified": "2026-10-18",
+      "ingested_records": 0,
+      "reason": "Terms restrict automated bulk downloads and LLM training without permission and request permission for potential commercial data reuse. Resolve intended-use rights before integration.",
+      "access": "Data no-cost; API documentation directs portal sign-in. No account, credentials or integration created.",
+      "potential_value": "Global macro/financial series and dated WEO editions; coverage/vintages require dataset-level verification."
+    }
+  ],
+  "architecture": {
+    "archive_catalog": "Track rights, access, coverage, rate policy, versions and verification state before retrieval.",
+    "case_library": "Curated cases with chronology, contemporary evidence, later context, competing explanations, affected entities and missing data.",
+    "retrieval": "Bounded entity/country/date requests; no bulk mirroring. Preserve event time, first public availability, vintage/version, retrieval time, timezone, temporal precision and source provenance.",
+    "replay_gate": "Only evidence verified publicly available before cutoff is eligible. Unknown publication time means context-only, never an invented timestamp."
+  },
+  "coverage_labels": {
+    "PIT-eligible": "Contemporary evidence with verified public availability before replay cutoff; source eligibility alone does not qualify individual records.",
+    "Vintage-bounded": "Known edition/release date with limited timing precision.",
+    "Retrospective context": "Revised statistics, later coding or historical interpretation; excluded from contemporaneous signal inputs.",
+    "Discovery-only": "Leads requiring source corroboration.",
+    "Rights/access blocked": "No ingestion until applicable rights and access resolved."
+  },
+  "proposed_initial_case_families": [
+    {
+      "name": "Inflation, rates and credit crises",
+      "examples": [
+        "1970s tightening",
+        "2007–2009 crisis",
+        "2021–2023 inflation/tightening"
+      ],
+      "sources": [
+        "us_original_macro",
+        "bis",
+        "sec_company"
+      ],
+      "status": "proposed_not_ingested"
+    },
+    {
+      "name": "War, energy and supply shocks",
+      "examples": [
+        "1990–1991",
+        "2022"
+      ],
+      "sources": [
+        "ucdp",
+        "eia",
+        "world_bank",
+        "gdelt"
+      ],
+      "status": "proposed_not_ingested"
+    },
+    {
+      "name": "Technology adoption and regulatory shifts",
+      "examples": [
+        "2007 iPhone announcement",
+        "Selected rule publication versus effective dates"
+      ],
+      "sources": [
+        "sec_company",
+        "federal_register"
+      ],
+      "status": "proposed_not_ingested"
+    }
+  ],
+  "limitations": [
+    "No complete world-history claim.",
+    "No causal or predictive-accuracy claim.",
+    "No free survivorship-bias-free securities-price corpus established.",
+    "No accounts, keys, subscriptions, installations, uploads, publication or mass downloads performed."
+  ]
+}

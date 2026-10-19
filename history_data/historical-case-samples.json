@@ -1,0 +1,254 @@
+{
+  "schema_version": "1.0.0",
+  "dataset_title": "Historical Event Source Pilot",
+  "retrieval_date": "2026-10-18",
+  "purpose": "Three curated examples of evidence-linked historical event retrieval, not a comprehensive global corpus, investment signal, causal study or lookahead-free backtest.",
+  "selection": "Purposive examples chosen after the events; not representative, exhaustive or suitable for performance inference.",
+  "global_limitations": [
+    "Current official pages are evidence of stated announcements, not immutable historical availability records.",
+    "Contemporaneous describes document origin, not retrieval date or verified historical version.",
+    "Entity relationships are document-grounded; securities and causal market exposure are not inferred.",
+    "Null outcomes mean not collected, never zero return or no effect.",
+    "No market prices, returns, trade recommendations, or performance claims."
+  ],
+  "cases": [
+    {
+      "case_id": "iphone_announcement_2007",
+      "theme": "technology_product_announcement",
+      "event": {
+        "date": "2007-01-09",
+        "time": null,
+        "precision": "day",
+        "date_semantics": "Date of announced action; distinct from source publication metadata.",
+        "date_evidence": "apple_20070109"
+      },
+      "sources": [
+        {
+          "source_id": "apple_20070109",
+          "document_title": "Apple Reinvents the Phone with iPhone",
+          "official_url": "https://www.apple.com/newsroom/2007/01/09Apple-Reinvents-the-Phone-with-iPhone/",
+          "publisher_is_primary": true,
+          "publication": {
+            "date": "2007-01-09",
+            "time": null,
+            "timezone": null,
+            "precision": "day",
+            "date_evidence": "Press-release header and opening Macworld San Francisco dateline both state January 9, 2007.",
+            "time_evidence": "No publication time verified in inspected page.",
+            "timestamp_utc": null,
+            "timestamp_semantics": "Calendar date only; no intraday availability assertion."
+          },
+          "retrieval_date": "2026-10-18",
+          "document_classification": "contemporaneous_release",
+          "version_status": "Current official page inspected; original historical snapshot and revision history not authenticated.",
+          "evidence_locator": "Press-release header and opening Macworld San Francisco dateline both state January 9, 2007."
+        }
+      ],
+      "factual_summary": "Apple introduced iPhone, combining phone, music-player and internet functions with a multi-touch interface. The release named Cingular as exclusive US carrier and described planned US availability in June 2007.",
+      "directly_evidenced_entities": [
+        {
+          "name": "Apple",
+          "relationship": "Product announcer.",
+          "source_id": "apple_20070109"
+        },
+        {
+          "name": "Cingular",
+          "relationship": "Named exclusive US carrier partner.",
+          "source_id": "apple_20070109"
+        },
+        {
+          "name": "Yahoo!",
+          "relationship": "Named provider of push email and search services.",
+          "source_id": "apple_20070109"
+        },
+        {
+          "name": "Google",
+          "relationship": "Named provider of search and mapping services.",
+          "source_id": "apple_20070109"
+        }
+      ],
+      "hypotheses": [
+        {
+          "statement": "Could a product-platform announcement alter expectations for handset demand or distribution partners? No valuation or return effect is established.",
+          "status": "unverified",
+          "type": "research_question_not_observed_outcome"
+        }
+      ],
+      "outcomes": null,
+      "market_data": null,
+      "eligibility": {
+        "use": "context_only",
+        "point_in_time_backtest_eligible": false,
+        "reason": "No verified release time; historical version and availability not authenticated."
+      },
+      "known_gaps": [
+        "Intraday release time and keynote timing not verified.",
+        "Announcement plans are not evidence of subsequent shipment, adoption or profitability.",
+        "Historical security identifiers, corporate actions and market observations not collected."
+      ],
+      "potential_confounders_to_investigate": [
+        "Other news released at the same event.",
+        "Prior rumors or expectations and concurrent company or market news."
+      ]
+    },
+    {
+      "case_id": "aig_facility_authorization_2008",
+      "theme": "financial_crisis_intervention",
+      "event": {
+        "date": "2008-09-16",
+        "time": null,
+        "precision": "day",
+        "date_semantics": "Date of announced action; distinct from source publication metadata.",
+        "date_evidence": "fed_20080916_aig"
+      },
+      "sources": [
+        {
+          "source_id": "fed_20080916_aig",
+          "document_title": "Federal Reserve Board, with full support of the Treasury Department, authorizes the Federal Reserve Bank of New York to lend up to $85 billion to the American International Group (AIG)",
+          "official_url": "https://www.federalreserve.gov/newsevents/pressreleases/other20080916a.htm",
+          "publisher_is_primary": true,
+          "publication": {
+            "date": "2008-09-16",
+            "time": "21:00",
+            "timezone": "EDT (UTC-04:00)",
+            "precision": "minute",
+            "date_evidence": "Release header states September 16, 2008; opening paragraph describes the Board authorization on Tuesday.",
+            "time_evidence": "Release header states: For release at 9:00 p.m. EDT.",
+            "timestamp_utc": "2008-09-17T01:00:00Z",
+            "timestamp_semantics": "Publisher-stated release time; actual first public availability not independently verified."
+          },
+          "retrieval_date": "2026-10-18",
+          "document_classification": "contemporaneous_release",
+          "version_status": "Current official page inspected; original historical snapshot and revision history not authenticated.",
+          "evidence_locator": "Release header states September 16, 2008; opening paragraph describes the Board authorization on Tuesday."
+        }
+      ],
+      "factual_summary": "The Federal Reserve Board authorized the New York Fed to lend AIG up to $85 billion. The announcement described a secured, 24-month facility and a 79.9% US government equity interest; these are announced terms, not measured outcomes.",
+      "directly_evidenced_entities": [
+        {
+          "name": "AIG",
+          "relationship": "Named borrower.",
+          "source_id": "fed_20080916_aig"
+        },
+        {
+          "name": "Federal Reserve Board",
+          "relationship": "Authorizing institution.",
+          "source_id": "fed_20080916_aig"
+        },
+        {
+          "name": "Federal Reserve Bank of New York",
+          "relationship": "Authorized lender.",
+          "source_id": "fed_20080916_aig"
+        },
+        {
+          "name": "US Treasury Department",
+          "relationship": "Support for authorization stated in release.",
+          "source_id": "fed_20080916_aig"
+        },
+        {
+          "name": "US government",
+          "relationship": "Announced equity recipient.",
+          "source_id": "fed_20080916_aig"
+        }
+      ],
+      "hypotheses": [
+        {
+          "statement": "Could emergency liquidity support change perceived default risk while equity participation changes dilution expectations? No price response or net effect is established.",
+          "status": "unverified",
+          "type": "research_question_not_observed_outcome"
+        }
+      ],
+      "outcomes": null,
+      "market_data": null,
+      "eligibility": {
+        "use": "timestamped_release_candidate_only",
+        "point_in_time_backtest_eligible": false,
+        "reason": "Stated release time verified, but historical version, first availability, security mapping and market data are not validated."
+      },
+      "known_gaps": [
+        "Publisher-stated 21:00 EDT is not an independently verified first-distribution timestamp.",
+        "Authorization time is not separately stated; do not assign release time to the Board action.",
+        "Subsequent changes to facility terms are outside this record.",
+        "No trading-session alignment or historical security mapping."
+      ],
+      "potential_confounders_to_investigate": [
+        "Other crisis interventions, funding stresses and news around the same date.",
+        "Anticipation, leaks, and simultaneous institution-specific developments."
+      ]
+    },
+    {
+      "case_id": "iea_emergency_stock_agreement_2022",
+      "theme": "energy_supply_shock_response",
+      "event": {
+        "date": "2022-03-01",
+        "time": null,
+        "precision": "day",
+        "date_semantics": "Date of announced action; distinct from source publication metadata.",
+        "date_evidence": "iea_20220301_release"
+      },
+      "sources": [
+        {
+          "source_id": "iea_20220301_release",
+          "document_title": "IEA Member Countries to make 60 million barrels of oil available following Russia’s invasion of Ukraine",
+          "official_url": "https://www.iea.org/news/iea-member-countries-to-make-60-million-barrels-of-oil-available-following-russias-invasion-of-ukraine",
+          "publisher_is_primary": true,
+          "publication": {
+            "date": "2022-03-01",
+            "time": null,
+            "timezone": null,
+            "precision": "day",
+            "date_evidence": "Press-release header states 01 March 2022; text identifies the agreement and ministerial meeting as today.",
+            "time_evidence": "No publication time verified in inspected page.",
+            "timestamp_utc": null,
+            "timestamp_semantics": "Calendar date only; no intraday availability assertion."
+          },
+          "retrieval_date": "2026-10-18",
+          "document_classification": "contemporaneous_release",
+          "version_status": "Current official page inspected; original historical snapshot and revision history not authenticated.",
+          "evidence_locator": "Press-release header states 01 March 2022; text identifies the agreement and ministerial meeting as today."
+        }
+      ],
+      "factual_summary": "The IEA announced that its 31 member countries agreed to release 60 million barrels from emergency oil reserves following Russia’s invasion of Ukraine. The statement described an initial commitment, not proof of physical delivery or a measured price effect.",
+      "directly_evidenced_entities": [
+        {
+          "name": "IEA Governing Board member countries",
+          "relationship": "Collective stock-release decision makers.",
+          "source_id": "iea_20220301_release"
+        },
+        {
+          "name": "Ukraine",
+          "relationship": "Invasion and fuel-supply support explicitly discussed.",
+          "source_id": "iea_20220301_release"
+        },
+        {
+          "name": "Russia",
+          "relationship": "Oil exporter and invading country explicitly discussed.",
+          "source_id": "iea_20220301_release"
+        }
+      ],
+      "hypotheses": [
+        {
+          "statement": "Could announced reserve availability partly offset expectations of supply disruption? Magnitude, implementation and net market effect remain untested.",
+          "status": "unverified",
+          "type": "research_question_not_observed_outcome"
+        }
+      ],
+      "outcomes": null,
+      "market_data": null,
+      "eligibility": {
+        "use": "context_only",
+        "point_in_time_backtest_eligible": false,
+        "reason": "No verified release time; historical version and availability not authenticated."
+      },
+      "known_gaps": [
+        "No publication time verified.",
+        "Announcement quantity must not be replaced with later revised commitments in a historical feature.",
+        "Country-level delivery schedules, realized volumes and benchmark-specific market data absent."
+      ],
+      "potential_confounders_to_investigate": [
+        "The release itself describes pre-existing tight oil markets and constrained short-term additional production.",
+        "War developments, sanctions, demand changes and other supply policies may coincide."
+      ]
+    }
+  ]
+}

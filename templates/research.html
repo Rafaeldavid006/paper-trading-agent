@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>מחקר אירועים · אביעד</title><link rel="stylesheet" href="{{url_for('static',filename='research.css')}}"></head>
-<body><header><a href="/">המחקר של אביעד</a><span class="badge">מחקר בלבד</span><a href="{{url_for('paper_status')}}">בקרת דמו</a>{% if session_logged_in %}<form action="{{url_for('logout')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>יציאה</button></form>{% endif %}</header>
+<body><header><a href="/">המחקר של אביעד</a><span class="badge">מחקר בלבד</span><a href="{{url_for('historical_library')}}">ספריית מחקר היסטורי</a><a href="{{url_for('paper_status')}}">בקרת דמו</a>{% if session_logged_in %}<form action="{{url_for('logout')}}" method="post"><input type="hidden" name="csrf" value="{{csrf}}"><button>יציאה</button></form>{% endif %}</header>
 <main><p class="muted">אירועים, השפעות ישירות ועקיפות וראיות לבדיקה. אין ביצוע עסקאות.</p>
 {% for message in get_flashed_messages() %}<p class="notice" role="status">{{message}}</p>{% endfor %}
 {% if mode=='index' %}

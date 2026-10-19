@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ספריית מחקר היסטורי</title><link rel="stylesheet" href="{{url_for('static',filename='research.css')}}"></head>
+<body><header><a href="{{url_for('index')}}">חזרה למחקר</a><span class="badge">קריאה בלבד</span></header>
+<main><h1>ספריית מחקר היסטורי</h1>
+<section aria-label="מגבלות המחקר"><h2>קטלוג מקורות ו־3 אירועים לדוגמה בלבד</h2>
+<p class="notice">זו אינה כל ההיסטוריה העולמית. המקורות קוטלגו אך לא נטענו למאגר (not_ingested). אין חיבור פעיל למקורות במסך זה.</p>
+<p>אין נתוני תשואה, אין אותות מסחר ואין בדיקת ביצועים. כשירות לבדיקה בנקודת הזמן ההיסטורית: לא (PIT eligible: false). תוצאה חסרה אינה תשואה של 0.</p>
+<p>זהו צילום מצב מקומי שנבדק ב־18.10.2026. פתיחת הדף אינה פונה לשירות חיצוני. לחיצה על קישור מקור תפתח את אתר המקור.</p></section>
+{% if unavailable %}<section role="alert"><h2>הספרייה אינה זמינה כרגע</h2><p>קובצי המקור חסרים או לא עברו אימות. לא מוצגים נתונים חלקיים או משוערים. שאר מסכי המחקר זמינים בקישור למעלה.</p></section>
+{% else %}
+{% macro evidence(value, key='') %}
+{% if value is mapping %}<dl>{% for k,v in value.items() %}<dt><bdi>{{k}}</bdi></dt><dd>{{evidence(v,k)}}</dd>{% endfor %}</dl>
+{% elif value is sequence and value is not string %}<ul>{% for item in value %}<li>{{evidence(item,key)}}</li>{% endfor %}</ul>
+{% elif value is none %}<span>חסר / לא נאסף (null)</span>
+{% elif value is sameas false %}<bdi>false</bdi>
+{% elif value is sameas true %}<bdi>true</bdi>
+{% elif key in ['official_url','official_urls'] %}<a href="{{value}}" rel="noreferrer noopener"><bdi>{{value}}</bdi></a>
+{% else %}<bdi>{{value}}</bdi>{% endif %}
+{% endmacro %}
+<section><h2>חיפוש בדוגמאות</h2><form method="get" action="{{url_for('historical_library')}}">
+<label for="history-q">שם אירוע, ישות או טקסט במקור</label><input id="history-q" name="q" maxlength="120" value="{{query}}">
+<label for="history-domain">תחום</label><select id="history-domain" name="domain"><option value="">כל התחומים</option>{% for option in domains %}<option value="{{option}}" {% if domain==option %}selected{% endif %}>{{option}}</option>{% endfor %}</select>
+<button type="submit">חיפוש</button> <a href="{{url_for('historical_library')}}">ניקוי סינון</a></form>
+<p>{{cases|length}} מתוך 3 דוגמאות. הסינון חל על הדוגמאות בלבד; קטלוג המקורות מוצג במלואו.</p></section>
+{% for case in cases %}<section><h2>{{labels[case.case_id][0]}}</h2><p>{{labels[case.case_id][1]}} · תאריך האירוע: <bdi>{{case.event.date}}</bdi> · דיוק: <bdi>{{case.event.precision}}</bdi></p>
+<p dir="auto">{{case.factual_summary}}</p><p>תוצאות ונתוני שוק: חסר / לא נאסף. PIT eligible: false</p>
+{% for source in case.sources %}<p>מקור ראשוני: <a href="{{source.official_url}}" rel="noreferrer noopener">{{source.document_title}}</a></p>
+<p>תאריך פרסום: <bdi>{{source.publication.date}}</bdi> · דיוק פרסום: <bdi>{{source.publication.precision}}</bdi> · שעת פרסום: <bdi>{{source.publication.time if source.publication.time is not none else 'לא אומתה'}}</bdi> · <bdi>{{source.publication.timezone if source.publication.timezone is not none else 'אזור זמן לא אומת'}}</bdi></p>{% endfor %}
+<details><summary>כל הראיות, השאלות הפתוחות ומגבלות התזמון (שפת המקור)</summary>{{evidence(case)}}</details></section>
+{% else %}<p role="status">לא נמצאו דוגמאות תואמות. אפשר לנקות את הסינון.</p>{% endfor %}
+<section><h2>קטלוג מקורות: 8 משפחות, 0 רשומות נטענו</h2><p>הזמינות, הרישוי והיקף הכיסוי להלן הם תיעוד לבדיקה, לא אישור שימוש או חיבור עובד.</p><p>UCDP דורש אסימון גישה. GDELT הוא כלי גילוי, לא מקור אמת לאירוע; יש לאמת מול מסמכי המקור.</p></section>
+{% for source in catalog.sources %}<section><h3><bdi>{{source.name}}</bdi></h3><p dir="auto">{{source.purpose}}</p><p>מצב קליטה: לא נטען · <bdi>{{source.ingestion_status}}</bdi></p>
+<details><summary>מקורות רשמיים, זכויות, גישה, כיסוי ומגבלות</summary>{{evidence(source)}}</details></section>{% endfor %}
+<section><h2>FRED / ALFRED ו־IMF: חסומים עד בירור זכויות וגישה</h2><p>לא מבוצעת משיכה ממקורות אלה. לא נוצרו חשבונות, מפתחות או חיבורים.</p>{% for source in catalog.review_blocks %}<h3><bdi>{{source.id}}</bdi></h3>{{evidence(source)}}{% endfor %}</section>
+<details><summary>היקף הבחירה ומגבלות כלליות (שפת המקור)</summary>{{evidence(pilot.global_limitations)}}{{evidence(pilot.selection)}}{{evidence(catalog.limitations)}}</details>
+{% endif %}</main></body></html>
