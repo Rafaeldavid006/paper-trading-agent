@@ -151,14 +151,18 @@ class ReadOnlyPaperConnection:
         with self.db() as c:
             row = dict(c.execute('SELECT * FROM paper_readonly WHERE id=1').fetchone())
         experiment=None
+        renewal=None
         with self.db() as c:
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_experiment'").fetchone():
                 exp=c.execute('SELECT phase,reason,next_open FROM paper_experiment WHERE id=1').fetchone()
                 if exp:experiment=dict(exp)
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_renewal'").fetchone():
+                exp=c.execute('SELECT phase,reason,next_open FROM paper_renewal WHERE id=1').fetchone()
+                if exp:renewal=dict(exp)
         stamp = row['checked_at']
         age = None if stamp is None else self.now().timestamp()-stamp
         fresh = age is not None and 0 <= age <= 30
-        return dict(experiment=experiment, readonly=True, capable=False, enabled=False, stopped=bool(row['stopped']),
+        return dict(renewal=renewal, experiment=experiment, readonly=True, capable=False, enabled=False, stopped=bool(row['stopped']),
                     revision=row['revision'], checked_at=stamp,
                     checked_at_iso=None if stamp is None else datetime.fromtimestamp(stamp,timezone.utc).isoformat(),
                     check_ok=bool(row['ok'] and fresh), last_check_ok=bool(row['ok']), fresh=fresh,

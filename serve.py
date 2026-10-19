@@ -38,10 +38,13 @@ def record_experiment_failure(exit_code, *, database='/var/data/paper-readonly.s
         try:
             with connection:
                 connection.execute('BEGIN IMMEDIATE')
-                result=connection.execute("""UPDATE paper_experiment
-                    SET phase='manual_attention',reason='worker_failed',updated=?
-                    WHERE id=1 AND phase NOT IN ('completed','no_fill','blocked','manual_attention','stopped')""",(time.time(),))
-                recorded=result.rowcount==1
+                # Preserve the old terminal record; report the active fixed generation.
+                for table in ('paper_experiment','paper_renewal'):
+                    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():continue
+                    result=connection.execute("UPDATE "+table+"""
+                        SET phase='manual_attention',reason='worker_failed',updated=?
+                        WHERE id=1 AND phase NOT IN ('completed','no_fill','blocked','manual_attention','stopped')""",(time.time(),))
+                    recorded=recorded or result.rowcount==1
         finally:connection.close()
     except Exception:
         pass  # Raw exceptions can include private filesystem/provider details.
@@ -62,7 +65,7 @@ def main():
             children.append(subprocess.Popen([sys.executable,'research_worker.py','--db',path,'--interval','60']))
         # Fixed approved one-shot child, separate from research and the GET-only UI.
         # Its normal terminal exit must not restart or stop the web service.
-        experiment=subprocess.Popen([sys.executable,'paper_experiment_worker.py'])
+        experiment=subprocess.Popen([sys.executable,'paper_renewal_worker.py'])
         while not stop.wait(.5):
             if any(child.poll() is not None for child in children):return 1
             if not experiment_observed:

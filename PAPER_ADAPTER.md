@@ -285,3 +285,35 @@ or changing web/research supervision. Existing nonterminal experiment state beco
 are retained. Already terminal outcomes are preserved. If existing storage cannot be
 updated, the sanitized supervisor log reports `attention_recorded=false`; storage is
 never recreated or reset. Intentional service shutdown does not emit this failure alert.
+
+## One separately approved renewal, 2026-10-19 17:13:46 UTC
+
+The original experiment stopped at `manual_attention / quote_moved`. Its durable
+`paper_experiment` row and `intents` rows are never reset or reused. The owner approved
+one additional attempt, not recurring retries. The new fixed generation
+`approved-paper-aapl-renewal-20261019-171346` uses `paper_renewal` and
+`renewal_intents` in the same private database, separate deterministic order IDs,
+and the same cross-process lock, stop latch and daily-loss ledger.
+
+`paper_renewal_gate.py` requires the original entry to be locally reserved, without
+broker ID or any fill and with no prior sell, with the exact prior failure reason.
+Before initial entry and again before transmission it verifies the same account
+fingerprint, explicit 404 for BOTH original client order IDs, no AAPL holding and
+no open orders. Unknown outcomes or unexpected prior state block renewal. The new
+generation also checks its own fixed IDs against broker history before first entry.
+It never changes or cancels an order from the original attempt or another actor.
+
+`paper_renewal.py` deliberately isolates the reviewed engine logic rather than
+changing the original path. Same one-share AAPL/$1,000 virtual ceiling, cash and
+exposure gates, fresh IEX prices, regular session only and **unchanged 0.1% final
+price-movement bound**. A repeated price movement can end this attempt too; there
+is no automatic repricing or another generation. Exact acquired quantity is sold
+only after entry becomes terminal. Uncertain outcomes are reconciled without a
+second POST; terminal status remains terminal after restart.
+
+`serve.py` starts only `paper_renewal_worker.py`, not both workers. Logs distinguish
+`mode=paper_renewal`. The authenticated screen displays original and renewed states
+separately and provides the same persistent stop, which also blocks exit/cancel.
+A worker crash preserves original evidence and marks the active generation for
+manual attention. No new source, permission, credential retrieval, paid service,
+generic order endpoint or trading strategy is introduced.
