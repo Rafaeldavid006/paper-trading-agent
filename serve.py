@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 from native_observation_supervisor import NativeProbeSupervisor
+from readonly_runtime_supervisor import ReadonlyRuntimeSupervisor
 
 
 def validate_environment(env):
@@ -61,6 +62,9 @@ def main():
     # One fixed-generation GET-only release probe. Its durable pre-network claim
     # prevents a restart/redeploy from replaying a completed or uncertain attempt.
     native_probe=NativeProbeSupervisor(enabled=True)
+    # Separate, hard GET-only observation runtime. Initialization uses an
+    # existing application-state anchor; never resets the fixed probe or orders.
+    readonly_runtime=ReadonlyRuntimeSupervisor(enabled=True)
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
@@ -73,15 +77,21 @@ def main():
         native_probe.start()
         while not stop.wait(.5):
             native_probe.poll()
+            readonly_runtime.poll()
             if any(child.poll() is not None for child in children):return 1
             if not experiment_observed:
                 code=experiment.poll()
                 if code is not None:
                     experiment_observed=True
                     if code!=0 and not stop.is_set():record_experiment_failure(code)
+                    elif code==0 and not stop.is_set():
+                        # The terminal legacy worker releases its account flock
+                        # before first-time inventory enrollment can begin.
+                        readonly_runtime.start()
         return 0
     finally:
         native_probe.close()
+        readonly_runtime.close()
         if experiment is not None:children.append(experiment)
         for child in children:
             if child.poll() is None:child.terminate()

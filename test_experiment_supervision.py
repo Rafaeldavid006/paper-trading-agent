@@ -23,6 +23,7 @@ class Stop:
 class SupervisionTests(unittest.TestCase):
     def setUp(self):
         self.probe = self.enterContext(patch.object(serve, 'NativeProbeSupervisor'))
+        self.readonly = self.enterContext(patch.object(serve, 'ReadonlyRuntimeSupervisor'))
 
     def exercise(self,status,stop_ticks=5):
         web=Child();worker=Child(status)
@@ -45,6 +46,13 @@ class SupervisionTests(unittest.TestCase):
     def test_normal_terminal_exit_never_reports_failure_or_respawns(self):
         _,_,failure,popen=self.exercise(0)
         failure.assert_not_called();self.assertEqual(2,popen.call_count)
+        self.readonly.return_value.start.assert_called_once()
+
+    def test_readonly_enrollment_waits_for_legacy_success(self):
+        self.exercise(None)
+        self.readonly.return_value.start.assert_not_called()
+        self.exercise(2)
+        self.readonly.return_value.start.assert_not_called()
 
     def test_signal_after_wait_before_report_suppresses_shutdown_alert(self):
         web=Child();worker=Child(-9);stop=Stop()

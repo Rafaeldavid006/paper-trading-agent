@@ -109,7 +109,8 @@ class NativeSupervisorTests(unittest.TestCase):
              patch.object(serve.subprocess, 'Popen', return_value=child) as popen, \
              patch.object(serve.threading, 'Event', return_value=stop), \
              patch.object(serve.signal, 'signal'), \
-             patch.object(serve, 'NativeProbeSupervisor') as factory:
+             patch.object(serve, 'NativeProbeSupervisor') as factory, \
+             patch.object(serve, 'ReadonlyRuntimeSupervisor'):
             self.assertEqual(serve.main(), 0)
         factory.assert_called_once_with(enabled=True)
         factory.return_value.start.assert_called_once()
