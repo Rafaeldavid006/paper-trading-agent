@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import threading
+from native_observation_supervisor import NativeProbeSupervisor
 
 
 def validate_environment(env):
@@ -57,6 +58,9 @@ def main():
     except ValueError as exc:
         print(str(exc),file=sys.stderr);return 1
     stop=threading.Event();children=[];experiment=None;experiment_observed=False
+    # One fixed-generation GET-only release probe. Its durable pre-network claim
+    # prevents a restart/redeploy from replaying a completed or uncertain attempt.
+    native_probe=NativeProbeSupervisor(enabled=True)
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
@@ -66,7 +70,9 @@ def main():
         # Fixed approved one-shot child, separate from research and the GET-only UI.
         # Its normal terminal exit must not restart or stop the web service.
         experiment=subprocess.Popen([sys.executable,'paper_renewal_worker.py'])
+        native_probe.start()
         while not stop.wait(.5):
+            native_probe.poll()
             if any(child.poll() is not None for child in children):return 1
             if not experiment_observed:
                 code=experiment.poll()
@@ -75,6 +81,7 @@ def main():
                     if code!=0 and not stop.is_set():record_experiment_failure(code)
         return 0
     finally:
+        native_probe.close()
         if experiment is not None:children.append(experiment)
         for child in children:
             if child.poll() is None:child.terminate()

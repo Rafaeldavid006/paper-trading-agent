@@ -21,6 +21,9 @@ class Stop:
     def is_set(self):return self.ticks<=0
 
 class SupervisionTests(unittest.TestCase):
+    def setUp(self):
+        self.probe = self.enterContext(patch.object(serve, 'NativeProbeSupervisor'))
+
     def exercise(self,status,stop_ticks=5):
         web=Child();worker=Child(status)
         with patch.object(serve,'validate_environment',return_value=('/tmp/mock-events.sqlite','8000')),patch.dict(serve.os.environ,{'ENABLE_AUTO_RESEARCH':'false'}),patch.object(serve.subprocess,'Popen',side_effect=[web,worker]) as popen,patch.object(serve.threading,'Event',return_value=Stop(stop_ticks)),patch.object(serve.signal,'signal'),patch.object(serve,'record_experiment_failure',create=True) as failure:
