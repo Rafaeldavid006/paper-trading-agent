@@ -10,6 +10,7 @@ import sys
 import threading
 from native_observation_supervisor import NativeProbeSupervisor
 from readonly_runtime_supervisor import ReadonlyRuntimeSupervisor
+from native_schema_diagnostic_supervisor import SchemaDiagnosticSupervisor
 
 
 def validate_environment(env):
@@ -65,6 +66,7 @@ def main():
     # Separate, hard GET-only observation runtime. Initialization uses an
     # existing application-state anchor; never resets the fixed probe or orders.
     readonly_runtime=ReadonlyRuntimeSupervisor(enabled=True)
+    schema_diagnostic=SchemaDiagnosticSupervisor(enabled=True)
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
@@ -78,6 +80,10 @@ def main():
         while not stop.wait(.5):
             native_probe.poll()
             readonly_runtime.poll()
+            # Diagnostic is separate from, and cannot recover, the halted runtime.
+            if readonly_runtime.halted and readonly_runtime.active_stage is None:
+                schema_diagnostic.start()
+            schema_diagnostic.poll()
             if any(child.poll() is not None for child in children):return 1
             if not experiment_observed:
                 code=experiment.poll()
@@ -92,6 +98,7 @@ def main():
     finally:
         native_probe.close()
         readonly_runtime.close()
+        schema_diagnostic.close()
         if experiment is not None:children.append(experiment)
         for child in children:
             if child.poll() is None:child.terminate()
