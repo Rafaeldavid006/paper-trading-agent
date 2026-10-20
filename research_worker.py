@@ -61,6 +61,18 @@ def main():
     while not stop.is_set():
         try:
             result=cycle(store)
+            # Opt-in local audit only; no transport, polling, or strategy activation.
+            if os.environ.get('ENABLE_SHADOW_OBSERVATIONS') == 'true':
+                try:
+                    from pathlib import Path
+                    from live_shadow import run as shadow_run
+                    audit = str(Path(args.db).resolve().with_name('shadow-observations.sqlite'))
+                    observations = shadow_run(args.db, audit, store.clock())
+                    print(json.dumps({'status':'shadow_observed', 'count':len(observations),
+                        'candidates':sum(r['status']=='observation_candidate' for r in observations),
+                        'order_permission':'none'}), flush=True)
+                except Exception:
+                    print('{"status":"shadow_audit_failed","order_permission":"none"}', flush=True)
             state='error' if result['status'] in ('blocked_source_coverage','failed') else 'ok'
             store.heartbeat('research-worker',state);print(json.dumps(result),flush=True)
         except Exception:
