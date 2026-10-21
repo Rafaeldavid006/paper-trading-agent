@@ -11,6 +11,11 @@ import threading
 from native_observation_supervisor import NativeProbeSupervisor
 from readonly_runtime_supervisor import ReadonlyRuntimeSupervisor
 from native_schema_diagnostic_supervisor import SchemaDiagnosticSupervisor
+from native_diagnostic_audit_supervisor import DiagnosticAuditSupervisor
+
+# This proposed release inspects already-existing evidence only. It deliberately
+# does not launch any historical probe, schema diagnostic or trading worker.
+INSPECT_EXISTING_AUDIT_ONLY = True
 
 
 def validate_environment(env):
@@ -20,7 +25,7 @@ def validate_environment(env):
     if not path.parent.is_dir():raise ValueError('EVENT_DB parent directory must exist')
     port=env.get('PORT','8000')
     if not port.isdigit() or not 1<=int(port)<=65535:raise ValueError('invalid PORT')
-    if env.get('ENABLE_AUTO_RESEARCH')=='true':
+    if not INSPECT_EXISTING_AUDIT_ONLY and env.get('ENABLE_AUTO_RESEARCH')=='true':
         if env.get('PERSISTENT_STORAGE_CONFIRMED')!='true' or not path.is_absolute():
             raise ValueError('automatic research requires confirmed persistent storage and absolute EVENT_DB')
         if env.get('ENABLE_WEB_RESEARCH')!='true':raise ValueError('web research must also be enabled')
@@ -62,30 +67,39 @@ def main():
     stop=threading.Event();children=[];experiment=None;experiment_observed=False
     # One fixed-generation GET-only release probe. Its durable pre-network claim
     # prevents a restart/redeploy from replaying a completed or uncertain attempt.
-    native_probe=NativeProbeSupervisor(enabled=True)
+    native_probe=NativeProbeSupervisor(enabled=not INSPECT_EXISTING_AUDIT_ONLY)
     # Separate, hard GET-only observation runtime. Initialization uses an
     # existing application-state anchor; never resets the fixed probe or orders.
-    readonly_runtime=ReadonlyRuntimeSupervisor(enabled=True)
-    schema_diagnostic=SchemaDiagnosticSupervisor(enabled=True)
+    readonly_runtime=ReadonlyRuntimeSupervisor(enabled=not INSPECT_EXISTING_AUDIT_ONLY)
+    schema_diagnostic=SchemaDiagnosticSupervisor(enabled=not INSPECT_EXISTING_AUDIT_ONLY)
+    # Proposed separate publication: inspect only the consumed diagnostic audit.
+    # No new broker sample, state initialization or replay fence reset.
+    diagnostic_audit=DiagnosticAuditSupervisor(enabled=True)
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
+        web_entry='inspection_wsgi:app' if INSPECT_EXISTING_AUDIT_ONLY else 'wsgi:app'
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
-            '--workers','1','--threads','4','--timeout','120','wsgi:app']))
-        if os.environ.get('ENABLE_AUTO_RESEARCH')=='true':
+            '--workers','1','--threads','4','--timeout','120',web_entry]))
+        if not INSPECT_EXISTING_AUDIT_ONLY and os.environ.get('ENABLE_AUTO_RESEARCH')=='true':
             children.append(subprocess.Popen([sys.executable,'research_worker.py','--db',path,'--interval','60']))
         # Fixed approved one-shot child, separate from research and the GET-only UI.
         # Its normal terminal exit must not restart or stop the web service.
-        experiment=subprocess.Popen([sys.executable,'paper_renewal_worker.py'])
-        native_probe.start()
+        if INSPECT_EXISTING_AUDIT_ONLY:
+            diagnostic_audit.start()
+        else:
+            experiment=subprocess.Popen([sys.executable,'paper_renewal_worker.py'])
+            native_probe.start()
         while not stop.wait(.5):
             native_probe.poll()
             readonly_runtime.poll()
             # Diagnostic is separate from, and cannot recover, the halted runtime.
-            if readonly_runtime.halted and readonly_runtime.active_stage is None:
+            if (not INSPECT_EXISTING_AUDIT_ONLY and readonly_runtime.halted
+                    and readonly_runtime.active_stage is None):
                 schema_diagnostic.start()
             schema_diagnostic.poll()
+            diagnostic_audit.poll()
             if any(child.poll() is not None for child in children):return 1
-            if not experiment_observed:
+            if experiment is not None and not experiment_observed:
                 code=experiment.poll()
                 if code is not None:
                     experiment_observed=True
@@ -99,6 +113,7 @@ def main():
         native_probe.close()
         readonly_runtime.close()
         schema_diagnostic.close()
+        diagnostic_audit.close()
         if experiment is not None:children.append(experiment)
         for child in children:
             if child.poll() is None:child.terminate()
