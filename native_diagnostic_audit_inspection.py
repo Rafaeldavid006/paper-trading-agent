@@ -349,6 +349,20 @@ def main(argv=None):
         except InspectionFailure as exc:
             result = report('audit_inspection_unavailable', inspection_stage=exc.stage,
                             inspection_role=exc.role, inspection_code=exc.code)
+            if (exc.stage, exc.role, exc.code) == ('bundle_verify_before_lock',
+                    'anchor', 'bundle_anchor_replaced'):
+                # Comparisons only. Never resume the failed verifier or read the
+                # audit as trusted evidence after an identity refusal.
+                try:
+                    from native_cohort_identity_evidence import inspect_identity_evidence
+                    result['identity_evidence'] = inspect_identity_evidence(enabled=True)
+                except Exception:
+                    # A supplemental-reader failure cannot erase the original
+                    # refusal. Never emit its exception or partial raw values.
+                    result['identity_evidence'] = dict(status='untrusted_unavailable',
+                        stage='supplement', code='supplement_unavailable', trusted=False,
+                        runtime_gate_passed=False, provider_requests=0,
+                        state_mutated=False, runtime_reset_performed=False)
         except Exception as exc:
             result = report('audit_inspection_unavailable', inspection_stage='arguments',
                             inspection_code=_safe_error(exc))
