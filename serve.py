@@ -12,6 +12,7 @@ from native_observation_supervisor import NativeProbeSupervisor
 from readonly_runtime_supervisor import ReadonlyRuntimeSupervisor
 from native_schema_diagnostic_supervisor import SchemaDiagnosticSupervisor
 from native_diagnostic_audit_supervisor import DiagnosticAuditSupervisor
+from native_restart_apply_once import run_startup_gate
 
 # This proposed release inspects already-existing evidence only. It deliberately
 # does not launch any historical probe, schema diagnostic or trading worker.
@@ -77,6 +78,10 @@ def main():
     diagnostic_audit=DiagnosticAuditSupervisor(enabled=True)
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
+        # Disabled unless a separately approved fixed migration release enables
+        # it. No web/user routes or background workers start before child reap.
+        if not run_startup_gate(inspection_only=INSPECT_EXISTING_AUDIT_ONLY,stop=stop):
+            return 0 if stop.is_set() else 1
         web_entry='inspection_wsgi:app' if INSPECT_EXISTING_AUDIT_ONLY else 'wsgi:app'
         children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
             '--workers','1','--threads','4','--timeout','120',web_entry]))
