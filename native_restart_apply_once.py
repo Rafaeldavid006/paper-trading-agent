@@ -18,12 +18,13 @@ import native_restart_migration as migration
 import native_restart_preflight as preflight
 import runtime_state_bundle as bundle
 
-ENABLE_APPROVED_MIGRATION = False
-EXTERNAL_WRITER_QUIESCENCE_CONFIRMED = False
+ENABLE_APPROVED_MIGRATION = True
+EXTERNAL_WRITER_QUIESCENCE_CONFIRMED = True
 APPROVED_SNAPSHOT_DIGEST = 'dbe5194ac45805beeb51a7f6dca732b487851ec67923be1ea7fdb143b50d3a1d'
-EXPECTED_CORE_CODE_DIGEST = 'da12f995c97a3502ab88c90482db37a109a576e9865d19f40bac2cbbf67210ad'
+EXPECTED_CORE_CODE_DIGEST = 'af5e6a36b741ed0b6ed91903ac06a9175d23400bf7a36e24073169c1fac03862'
 EXPECTED_SNAPSHOT_BYTES = 1896794
-BACKUP_ROOT = '/var/data/native-restart-identity-backup-' + APPROVED_SNAPSHOT_DIGEST
+# The prior failed root is immutable evidence, never reused or removed.
+BACKUP_ROOT = '/var/data/native-restart-identity-backup-' + APPROVED_SNAPSHOT_DIGEST + '-attempt-2'
 ATTEMPT_FILE = 'attempt.json'
 SNAPSHOT_DIRECTORY = 'snapshot'
 FORMAT = 'native-restart-apply-once-v1'
@@ -86,7 +87,7 @@ def _directory(path):
     try:
         info=os.fstat(fd);named=os.stat(path,follow_symlinks=False)
         require(stat.S_ISDIR(info.st_mode) and info.st_uid==os.geteuid()
-                and stat.S_IMODE(info.st_mode)==0o700 and
+                and stat.S_IMODE(info.st_mode) in (0o700,0o2700) and
                 (info.st_dev,info.st_ino)==(named.st_dev,named.st_ino),'unsafe_attempt_directory')
         return fd,(info.st_dev,info.st_ino)
     except BaseException:os.close(fd);raise

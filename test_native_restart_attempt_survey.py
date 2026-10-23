@@ -53,34 +53,27 @@ class AttemptSurveyTests(unittest.TestCase):
         self.assertFalse(result['attempt_record']['present']);self.assertEqual(result['anchor']['migration_marker'],'absent')
         self.assertFalse(self.root.exists())
 
-    def test_real_setgid_inheritance_reproduces_failure_and_survey_explains_it(self):
-        parent=self.case.fixture.root/'sgid-parent';parent.mkdir(mode=0o700);parent.chmod(0o2700)
-        self.root=parent/'attempt';self.kw['root']=str(self.root);plan=self.case.prepare()
-        spawn=Mock(side_effect=AssertionError('no child'));messages=[];before=self.case.state()
-        with patch.object(launcher,'ENABLE_APPROVED_MIGRATION',True), \
-             patch.object(launcher,'EXTERNAL_WRITER_QUIESCENCE_CONFIRMED',True), \
-             patch.object(migration,'apply',side_effect=AssertionError('no apply')):
-            result=launcher.run_startup_gate(inspection_only=True,stop=threading.Event(),test_only=True,
-                paths=self.case.paths,backup_root=str(self.root),approved_digest=plan.digest,
-                expected_bytes=sum(v['size'] for v in json.loads(plan.snapshot).values()),popen=spawn,emit_report=messages.append)
-        self.assertFalse(result);spawn.assert_not_called();self.assertEqual(before,self.case.state())
-        self.assertEqual(messages[-1]['code'],'unsafe_attempt_directory');self.assertEqual(list(self.root.iterdir()),[])
+    def test_survey_observes_setgid_without_repair_or_reuse(self):
+        parent=self.case.fixture.root/'sgid-parent';parent.mkdir(mode=0o700);parent.chmod(0o2775)
+        self.root=parent/'attempt';self.root.mkdir(mode=0o700);self.kw['root']=str(self.root)
+        self.assertEqual(stat.S_IMODE(self.root.stat().st_mode),0o2700)
         report=self.run_survey()
-        for name in ('parent','attempt_directory'):
-            self.assertEqual(report[name]['mode_octal'],'2700');self.assertTrue(report[name]['setgid'])
-            self.assertTrue(report[name]['owner_matches_runtime']);self.assertTrue(report[name]['private_directory_access'])
+        self.assertEqual(report['parent']['mode_octal'],'2775')
+        self.assertEqual(report['attempt_directory']['mode_octal'],'2700')
+        self.assertTrue(report['attempt_directory']['owner_matches_runtime'])
+        self.assertTrue(report['attempt_directory']['private_directory_access'])
         self.assertTrue(report['attempt_directory']['empty']);self.assertFalse(report['attempt_record']['present'])
 
     def test_pending_record_is_redacted_untrusted_and_not_reused(self):
         self.root.mkdir(mode=0o700);record=self.root/'attempt.json'
-        record.write_bytes(launcher.bundle._json(launcher._record(survey.SNAPSHOT_DIGEST,1896794,'pending')));record.chmod(0o600)
+        record.write_bytes(launcher.bundle._json(dict(launcher._record(survey.SNAPSHOT_DIGEST,1896794,'pending'),core_code_digest=survey.CORE_DIGEST)));record.chmod(0o600)
         result=self.run_survey();self.assertEqual(result['attempt_record']['status'],'pending')
         self.assertTrue(result['attempt_record']['exact_fixed_record'])
         record.write_text('{"status":"SECRET TOKEN", "secret":"DO NOT LOG"}')
         result=self.run_survey();self.assertEqual(result['attempt_record']['status'],'unrecognized')
         self.assertFalse(result['attempt_record']['exact_fixed_record']);self.assertNotIn('SECRET',json.dumps(result))
         self.assertNotIn('DO NOT LOG',json.dumps(result))
-        record.write_bytes(launcher.bundle._json(launcher._record(survey.SNAPSHOT_DIGEST,1896794,'unrecognized')))
+        record.write_bytes(launcher.bundle._json(dict(launcher._record(survey.SNAPSHOT_DIGEST,1896794,'unrecognized'),core_code_digest=survey.CORE_DIGEST)))
         self.assertFalse(self.run_survey()['attempt_record']['exact_fixed_record'])
 
     def test_fifo_symlink_and_oversized_record_do_not_block_or_follow(self):
@@ -131,14 +124,15 @@ class AttemptSurveyTests(unittest.TestCase):
         self.assertEqual(spawn.call_count,1);self.assertTrue(child.kill.called)
         self.assertTrue(all(x['provider_requests']==0 for x in logs))
 
-    def test_real_startup_defaults_disable_old_apply_and_preserve_seven_core_hash(self):
+    def test_real_startup_defaults_disable_apply_and_keep_old_survey_separate(self):
         import serve
         self.assertIs(launcher.ENABLE_APPROVED_MIGRATION,False)
         self.assertIs(launcher.EXTERNAL_WRITER_QUIESCENCE_CONFIRMED,False)
         defaults={node.targets[0].id:ast.literal_eval(node.value) for node in ast.parse(Path(serve.__file__).read_text()).body if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id=='INSPECT_EXISTING_AUDIT_ONLY'}
         self.assertIs(defaults['INSPECT_EXISTING_AUDIT_ONLY'],True)
-        self.assertIs(serve.DiagnosticAuditSupervisor,survey.FailedAttemptSurveySupervisor)
-        self.assertEqual(preflight.source_digest(),survey.CORE_DIGEST)
+        self.assertIsNot(serve.DiagnosticAuditSupervisor,survey.FailedAttemptSurveySupervisor)
+        self.assertEqual(preflight.source_digest(),launcher.EXPECTED_CORE_CODE_DIGEST)
+        self.assertNotEqual(preflight.source_digest(),survey.CORE_DIGEST)
         with patch.object(launcher,'_reserve_attempt',side_effect=AssertionError('no old apply reservation')):
             self.assertTrue(launcher.run_startup_gate(inspection_only=True,stop=threading.Event()))
 

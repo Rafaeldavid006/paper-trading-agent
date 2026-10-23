@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+import stat
 import time
 
 import runtime_state_bundle as b
@@ -221,13 +222,14 @@ def _backup(bundle,current,plan,destination):
     directory = os.open(str(target),os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     try:
         info = os.fstat(directory)
-        require(info.st_uid==os.geteuid() and info.st_mode&0o777==0o700
+        require(info.st_uid==os.geteuid() and stat.S_IMODE(info.st_mode) in (0o700,0o2700)
                 and not os.listdir(directory), 'restart_migration_backup_invalid')
         pinned = (info.st_dev,info.st_ino)
         def check_directory():
             b._parents(str(target/'placeholder'))
             now=target.stat(follow_symlinks=False)
-            require((now.st_dev,now.st_ino)==pinned and now.st_mode&0o777==0o700,
+            require((now.st_dev,now.st_ino)==pinned and now.st_uid==os.geteuid()
+                    and stat.S_IMODE(now.st_mode) in (0o700,0o2700),
                     'restart_migration_backup_changed')
         def write(name,raw):
             check_directory()

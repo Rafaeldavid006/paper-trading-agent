@@ -211,9 +211,8 @@ class PreflightStartupTests(unittest.TestCase):
             self.assertEqual(serve.main(),0)
         self.assertEqual(len(commands),2)
         self.assertEqual(commands[0][0][-1],'inspection_wsgi:app')
-        self.assertEqual(commands[1][0][1],'-B')
-        self.assertEqual(Path(commands[1][0][2]).name,'native_restart_attempt_survey.py')
-        self.assertEqual(commands[1][0][3:],[ '--inspect-failed-attempt-and-audit'])
+        self.assertEqual(Path(commands[1][0][1]).name,'native_restart_preflight.py')
+        self.assertEqual(commands[1][0][2:],[ '--inspect-restart-preflight'])
         self.assertFalse(commands[1][1]['shell'])
         for worker in (probe,runtime,diagnostic):
             worker.assert_called_once_with(enabled=False);worker.return_value.start.assert_not_called()

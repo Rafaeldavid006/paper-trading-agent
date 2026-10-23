@@ -11,7 +11,7 @@ import threading
 from native_observation_supervisor import NativeProbeSupervisor
 from readonly_runtime_supervisor import ReadonlyRuntimeSupervisor
 from native_schema_diagnostic_supervisor import SchemaDiagnosticSupervisor
-from native_restart_attempt_survey import FailedAttemptSurveySupervisor as DiagnosticAuditSupervisor
+from native_diagnostic_audit_supervisor import DiagnosticAuditSupervisor
 from native_restart_apply_once import run_startup_gate
 
 # This proposed release inspects already-existing evidence only. It deliberately
