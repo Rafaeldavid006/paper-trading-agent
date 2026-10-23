@@ -61,6 +61,12 @@ class RunnerLedger:
             if stopped or attention or (h is not None and t<h):
                 raise SafetyError('runner_not_operational')
             c.execute('UPDATE runner_control SET heartbeat=?,stage=? WHERE id=1',(t,stage))
+    def already_claimed(self, event):
+        key=(event.event_id,event.version,event.symbol)
+        with self.db() as c:
+            prior=c.execute('SELECT payload FROM runner_events WHERE event_id=? AND version=? AND symbol=?',key).fetchone()
+        if prior and prior[0]!=encode(asdict(event)): raise SafetyError('event_identity_conflict')
+        return prior is not None
     def claim(self, event):
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
@@ -143,8 +149,37 @@ class DemoTickRunner:
             if not self.ledger.begin(self.clock(),self.config.max_tick_gap_seconds):
                 state=self.ledger.status()
                 return {'phase':'stopped' if state['stopped'] else 'manual_attention','reason':state['attention'],'mode':self.mode}
-            self.port.reconcile(self.pulse('reconcile'))
-            self.port.expire_entries(self.pulse('expire'))
+            return self._run_started_tick()
+        except Exception:
+            return self._failed_tick()
+    def _failed_tick(self):
+        self.local_failed=True
+        try: self.ledger.attention('tick_failed')
+        except Exception: pass  # Durable dirty marker survives storage failure.
+        return {'phase':'manual_attention','reason':'tick_failed','mode':self.mode}
+    def _wait_started_tick(self, reason, **values):
+        self.ledger.finish(self.clock())
+        return dict(phase=reason,mode=self.mode,**values)
+    def _run_started_tick(self, *, reconciled=False, entry_wait=None):
+        # Internal continuation for the account-fenced native coordinator. It may
+        # reuse only a preflight from this same held scope, never a cached prior tick.
+        if not self.config.enabled: return {'phase':'disabled','mode':self.mode}
+        if self.local_failed: return {'phase':'manual_attention','reason':'local_failure','mode':self.mode}
+        try:
+            if entry_wait not in (None,'waiting_regular_bar_window'): raise SafetyError('invalid_entry_wait')
+            state=self.ledger.status()
+            if not state['dirty'] or state['attention'] or state['stopped']:
+                raise SafetyError('started_tick_required')
+            if reconciled:
+                from native_paper_runner import NativePaperExecutionPort
+                if type(self.port) is not NativePaperExecutionPort or state['stage']!='reconcile':
+                    raise SafetyError('native_preflight_required')
+                self.port.dispatcher._gate()
+            else:
+                if entry_wait is not None: raise SafetyError('native_preflight_required')
+                self.port.reconcile(self.pulse('reconcile'))
+            if self.port.expire_entries(self.pulse('expire')) is False:
+                return self._wait_started_tick('waiting_request_budget',exits=0)
             now=self.pulse('session')
             if not self.port.session(now):
                 self.ledger.finish(self.clock()); return {'phase':'closed_session','mode':self.mode}
@@ -154,10 +189,15 @@ class DemoTickRunner:
                 quote=self.market.quote(row['symbol'],self.pulse('exit_quote'))
                 now=self.pulse('exit_check')
                 if self.port.due(row,quote,now):
+                    capacity=getattr(self.port,'write_capacity',None)
+                    if capacity is not None and not capacity(2):
+                        return self._wait_started_tick('waiting_request_budget',exits=exits)
                     self.port.exit(row,quote,self.pulse('exit')); exits+=1
                     if self.port.blocked(): break
             if self.port.blocked():
                 self.ledger.finish(self.clock()); return {'phase':'blocked','exits':exits,'mode':self.mode}
+            if entry_wait is not None:
+                return self._wait_started_tick(entry_wait,exits=exits)
             count=0
             batch=self.events.events(self.pulse('events'),self.config.max_events)
             for event in batch:
@@ -166,6 +206,10 @@ class DemoTickRunner:
                 now=self.pulse('event_claim')
                 ready=getattr(self.port,'event_ready',None)
                 if ready is not None and ready(event,now) is not True: continue
+                if self.ledger.already_claimed(event): continue
+                capacity=getattr(self.port,'write_capacity',None)
+                if capacity is not None and not capacity(3):
+                    return self._wait_started_tick('waiting_request_budget',exits=exits)
                 if not self.ledger.claim(event): continue
                 if self.events.event_eligible(event) is not True: continue
                 inputs=self.market.inputs(event,self.pulse('market_inputs'))
@@ -177,10 +221,7 @@ class DemoTickRunner:
             self.ledger.finish(self.clock())
             return {'phase':'complete','events':count,'exits':exits,'mode':self.mode}
         except Exception:
-            self.local_failed=True
-            try: self.ledger.attention('tick_failed')
-            except Exception: pass  # Durable dirty marker survives when storage is unavailable.
-            return {'phase':'manual_attention','reason':'tick_failed','mode':self.mode}
+            return self._failed_tick()
     def shutdown(self):
         self.local_failed=True
         self.ledger.shutdown()

@@ -430,6 +430,65 @@ class SharedAccountGuard:
         _require(not self._read_only, 'read_only_guard_write_forbidden')
         return self.check()
 
+    def request_budget_remaining(self, *, now_ns):
+        """Inspect wire/collector capacity without changing either durable ledger.
+
+        Must run inside the same exclusive hold as the subsequent cycle. Expired
+        rows are counted as expired but not deleted; neither high-water time nor
+        attempts are advanced/refunded. This is not a prepaid reservation.
+        """
+        self.check()
+        now_ns = _ns(now_ns)
+        with self._state() as db:
+            high = db.execute('SELECT high_ns FROM account_guard_binding').fetchone()[0]
+            _require(now_ns >= high, 'request_clock_regression')
+            times = [r[0] for r in db.execute('SELECT at_ns FROM account_guard_attempts')]
+            _require(len(times) <= MAX_REQUESTS and all(type(t) is int and 0 < t <= high for t in times),
+                     'guard_state_corrupt')
+            remaining = MAX_REQUESTS - sum(t > now_ns - WINDOW_NS for t in times)
+            # The collector reserves before CoordinatedWire. A refused call may
+            # therefore leave a newer collector-only attempt. Full wire capacity
+            # alone cannot prove that a complete observation has room to run.
+            present = db.execute("SELECT 1 FROM sqlite_master WHERE name='native_read_budget'").fetchone()
+            if present:
+                schemas = {
+                    'native_read_budget': [('id', 'INTEGER', 0, None, 1),
+                                           ('version', 'INTEGER', 1, None, 0),
+                                           ('high_ns', 'INTEGER', 1, None, 0)],
+                    'native_read_attempts': [('at_ns', 'INTEGER', 1, None, 0)],
+                    'native_read_audit': [('at_ns', 'INTEGER', 1, None, 0),
+                                          ('status', 'TEXT', 1, None, 0),
+                                          ('attempts', 'INTEGER', 1, None, 0),
+                                          ('owned_count', 'INTEGER', 1, None, 0),
+                                          ('order_count', 'INTEGER', 1, None, 0),
+                                          ('digest', 'TEXT', 0, None, 0)],
+                }
+                for table, columns in schemas.items():
+                    actual = [r[1:6] for r in db.execute('PRAGMA table_info(' + table + ')')]
+                    _require(actual == columns, 'guard_state_corrupt')
+                meta = db.execute('SELECT id,version,high_ns FROM native_read_budget').fetchall()
+                _require(len(meta) == 1 and meta[0][:2] == (1, 1)
+                         and type(meta[0][2]) is int and 0 <= meta[0][2] <= MAX_NS,
+                         'guard_state_corrupt')
+                high = meta[0][2]
+                _require(now_ns >= high, 'request_clock_regression')
+                times = [r[0] for r in db.execute('SELECT at_ns FROM native_read_attempts')]
+                _require(len(times) <= MAX_REQUESTS and all(type(t) is int and 0 < t <= high for t in times),
+                         'guard_state_corrupt')
+                remaining = min(remaining, MAX_REQUESTS - sum(t > now_ns - WINDOW_NS for t in times))
+        return remaining
+
+    def admit_cycle(self, *, now_ns):
+        """Admit a full-capacity cycle under the existing exclusive account hold.
+
+        A caller must retain this hold through every cycle request and handle
+        cycle_budget_wait before creating a dirty stage or durable order claim.
+        Each actual request still uses reserve_request at its real attempt time.
+        """
+        _require(self.request_budget_remaining(now_ns=now_ns) == MAX_REQUESTS,
+                 'cycle_budget_wait')
+        return True
+
     def reserve_request(self, now_ns):
         """Commit before attempting any new-path call. Never refund failures."""
         self.check()

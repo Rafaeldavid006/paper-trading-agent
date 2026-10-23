@@ -364,8 +364,13 @@ class NativeObservationCollector:
     """
     def __init__(self, *, database, transport, expected_fingerprint, ledger_view,
                  symbols=('AAPL',), enabled=False, now_ns=time.time_ns,
-                 monotonic_ns=time.monotonic_ns):
+                 monotonic_ns=time.monotonic_ns, budget_factory=None):
         require(type(enabled) is bool, 'invalid_enable')
+        require(budget_factory is None or callable(budget_factory), 'budget_storage_unavailable')
+        # Explicit trusted construction seam. Existing finite runtimes provide a
+        # verified held-guard adapter; historical standalone callers keep their
+        # provisioning behavior. No environment or provider data selects this.
+        self.budget_factory = budget_factory
         self.enabled = enabled
         self.database = str(database)
         self.transport = transport
@@ -457,7 +462,8 @@ class NativeObservationCollector:
                     and getattr(self.transport, 'feed', None) == 'iex', 'invalid_transport_context')
             self._start_wall = self._last_wall = _ns(self.now_ns())
             self._start_mono = self._last_mono = _ns(self.monotonic_ns())
-            self._budget = SharedRequestBudget(self.database)
+            self._budget = (SharedRequestBudget(self.database) if self.budget_factory is None
+                            else self.budget_factory(self.database))
             view = self._view()
             self._owned_count = len(view.client_ids)
             account, _ = self._get('/v2/account')

@@ -28,6 +28,7 @@ from native_paper_execution import NativePaperDispatcher, NativePaperHTTP, Dispa
 from native_paper_runner import NativePaperExecutionPort, NativeMarketSource
 from primary_earnings_source import PrimaryEarningsSource, NvidiaReadOnlyHTTP
 from runtime_state_bundle import RuntimeStateBundle, RuntimeStateRefused, FIXED_PATHS
+from finite_pilot_anchor import read_only_startup_gate
 from shadow_market_inputs import parse_bars
 
 PHASES = frozenset(('initialize','source','broker'))
@@ -193,6 +194,9 @@ def run_phase(phase,*,paths=None,test_only=False,environ=None,now_ns=time.time_n
     resolved=FIXED_PATHS if paths is None else paths
     binding=load_owned_ledger(resolved['legacy']).account_fingerprint
     bundle=RuntimeStateBundle(binding,paths=paths,test_only=test_only)
+    # Before initialize_once, auto-creating constructors and credential access.
+    # A pending incident or finite pilot never falls back to this old poller.
+    read_only_startup_gate(bundle)
     if phase=='initialize':
         bundle.initialize_once(initialize=lambda p:initialize_components(p,binding,now_ns=now_ns,test_only=test_only))
         with serialized(bundle):

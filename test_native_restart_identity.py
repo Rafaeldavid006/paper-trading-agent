@@ -89,17 +89,19 @@ class RestartIdentityTests(unittest.TestCase):
         with sqlite3.connect(self.paths['anchor']) as db:
             db.execute(old._SQL)
             db.execute('INSERT INTO native_schema_diagnostic_claim VALUES(1,?,?,?,\'collection_refused\',\'none\',\'none\',4)',
-                       (old.GENERATION,old.code_hash(),NOW))
+                       (old.GENERATION,__import__('hashlib').sha256(Path(old.__file__).read_bytes()).hexdigest(),NOW))
         before=self.row_state();physical=self.state();result=self.apply()
         self.assertTrue(result['business_rows_preserved']);self.assertFalse(result['execution_ready'])
         self.assertEqual(before,self.row_state())
         self.assertEqual({r:v[1:] for r,v in physical.items()},{r:v[1:] for r,v in self.state().items()})
         for role in self.paths:self.assertEqual((self.backup/(role+'.backup')).read_bytes(),physical[role][0])
         self.assertTrue(self.fixture.make().verify())
-        # Consumed old diagnostic returns before guard/transport; never reset.
+        # Future collector/schema deliberately retire the old code-pinned
+        # diagnostic. It refuses before guard/transport; no receipt is repinned.
         with patch('native_schema_diagnostic.RuntimeReadOnlyHTTP',side_effect=AssertionError('no transport')):
-            result=old.run_once(enabled=True,paths=self.paths,test_only=True,environ={})
-        self.assertEqual(result['reason'],'diagnostic_already_claimed')
+            with self.assertRaisesRegex(ValueError,'diagnostic_refused'):
+                old.run_once(enabled=True,paths=self.paths,test_only=True,environ={})
+        self.assertEqual(before,self.row_state())
         with self.assertRaises(migration.MigrationRefused):self.apply()
 
     def test_second_remount_needs_no_migration_but_same_instance_cannot_repin(self):

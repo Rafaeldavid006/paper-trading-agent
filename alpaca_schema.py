@@ -1,7 +1,7 @@
 """Pure conservative Alpaca US equity response decoders. No I/O or execution."""
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 import hashlib
 import re
 
@@ -27,7 +27,8 @@ def number(value, *, nonnegative=True, quantity=False):
     require(isinstance(value,str) and len(value)<=50 and re.fullmatch(r'-?\d+(?:\.\d+)?',value), 'invalid_decimal_string')
     n=Decimal(value)
     require(len(n.as_tuple().digits)<=24, 'decimal_precision')
-    require(abs(n)<=Decimal('1e15') and (not nonnegative or n>=0), 'invalid_decimal_range')
+    # copy_abs is exact; abs(Decimal) rounds under the caller's ambient context.
+    require(n.copy_abs()<=Decimal('1e15') and (not nonnegative or n>=0), 'invalid_decimal_range')
     require(not quantity or n.as_tuple().exponent>=-9, 'quantity_precision')
     return n
 
@@ -79,6 +80,13 @@ class Order:
     submitted_ns: int
     updated_ns: int
     limit_price: Decimal
+    # Appended defaults preserve the existing positional constructor. Native
+    # parsing always supplies actual values, never invented event timestamps.
+    created_ns: int | None = None
+    filled_ns: int | None = None
+    canceled_ns: int | None = None
+    expired_ns: int | None = None
+    failed_ns: int | None = None
 
 @dataclass(frozen=True)
 class Quote:
@@ -144,15 +152,17 @@ def parse_order(raw):
     created,submitted,updated=(timestamp(r.get(k)) for k in ('created_at','submitted_at','updated_at'))
     require(created<=submitted<=updated, 'order_timestamp_order')
     if s=='filled': require(r.get('filled_at') is not None, 'missing_filled_timestamp')
-    for field in ('filled_at','canceled_at','expired_at','failed_at'):
-        if r.get(field) is not None: require(submitted<=timestamp(r[field])<=updated, 'order_event_timestamp_order')
+    events=tuple(None if r.get(field) is None else timestamp(r[field])
+                 for field in ('filled_at','canceled_at','expired_at','failed_at'))
+    for event in events:
+        if event is not None: require(submitted<=event<=updated, 'order_event_timestamp_order')
     price=number(r.get('limit_price')); require(price>0,'invalid_limit_price')
     require(f==0 or (avg<=price if r['side']=='buy' else avg>=price), 'fill_beyond_limit')
-    return Order(label(r.get('id')),label(r.get('client_order_id')),label(r.get('symbol')),r['side'],q,f,avg,s,submitted,updated,price)
+    return Order(label(r.get('id')),label(r.get('client_order_id')),label(r.get('symbol')),r['side'],q,f,avg,s,submitted,updated,price,created,*events)
 
 def reconcile_order(previous, current):
     """No stale update, mutation or terminal resurrection is silently accepted."""
-    identity=lambda x:(x.id,x.client_order_id,x.symbol,x.side,x.quantity,x.submitted_ns,x.limit_price)
+    identity=lambda x:(x.id,x.client_order_id,x.symbol,x.side,x.quantity,x.created_ns,x.submitted_ns,x.limit_price)
     require(identity(previous)==identity(current), 'order_identity_mutated')
     require(previous.status!='pending_cancel' or current.status in TERMINAL|{'pending_cancel'}, 'cancel_state_regression')
     require(current.updated_ns>=previous.updated_ns and current.filled>=previous.filled, 'order_regression')
@@ -188,7 +198,10 @@ def parse_latest_quotes(raw, *, symbols, feed, now_ns):
             require(type(v) in (int,float,str,Decimal), 'invalid_quote_number')
             return number(str(v))
         bid,ask=price(q.get('bp')),price(q.get('ap'))
-        require(0<bid<=ask<=bid*Decimal('1.01'),'invalid_quote_spread')
+        # Bounded inputs have <=24 significant digits. A fresh explicit context
+        # makes this exact even if caller precision, rounding or exponents differ.
+        with localcontext(Context(prec=60)):
+            require(0<bid<=ask<=bid*Decimal('1.01'),'invalid_quote_spread')
         require(price(q.get('bs'))>0 and price(q.get('as'))>0,'empty_quote_size')
         result.append(Quote(label(symbol),bid,ask,at,feed))
     return tuple(result)

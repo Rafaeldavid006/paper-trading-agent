@@ -1,4 +1,10 @@
-"""One-service supervisor: web UI and optional polling/research process share storage."""
+"""Inspection-only health service with separately approved finite PAPER children.
+
+The completed storage gate runs synchronously before every child. Historical
+probe, audit, GET, schema, research and recurring runtime invocations are retired.
+A terminal finite phase keeps only the readonly health service alive, so service
+restarts cannot be used as a substitute for durable phase/replay controls.
+"""
 import os
 import json
 import sqlite3
@@ -14,9 +20,11 @@ from native_schema_diagnostic_supervisor import SchemaDiagnosticSupervisor
 from native_postmigration_supervisors import ExistingAuditSupervisor as DiagnosticAuditSupervisor
 from native_postmigration_supervisors import GetDiagnosticSupervisor
 from native_postmigration_supervisors import verify_completed_storage as run_startup_gate
+from finite_pilot_supervisor import FinitePilotSupervisor
+import finite_pilot_contract as finite_contract
 
-# This proposed release inspects already-existing evidence only. It deliberately
-# does not launch any historical probe, schema diagnostic or trading worker.
+# Web routes remain inspection-only even if separately compiled finite grants
+# are supplied. This flag is not an audit-inspector or trading activation toggle.
 INSPECT_EXISTING_AUDIT_ONLY = True
 
 
@@ -62,77 +70,88 @@ def record_experiment_failure(exit_code, *, database='/var/data/paper-readonly.s
                          exit_code=exit_code,attention_recorded=recorded)),flush=True)
 
 
+def _finite_requested():
+    """Only exact compiled grants; no environment or caller-supplied override."""
+    pilot, recovery, proof = (finite_contract.APPROVED_PILOT,
+                              finite_contract.APPROVED_RECOVERY,
+                              finite_contract.APPROVED_INSPECTION)
+    if proof is not None and (pilot is not None or recovery is not None):
+        raise finite_contract.PilotRefused('mixed_inspection_scope')
+    for grant, check in ((pilot, finite_contract.require_pilot_manifest),
+                         (recovery, finite_contract.require_recovery_manifest),
+                         (proof, finite_contract.require_inspection_manifest)):
+        if grant is not None:
+            check(grant)
+    return any(grant is not None for grant in (pilot, recovery, proof))
+
+
+def _finite_terminal(runtime):
+    """One bounded status, never child output, identity or exception text."""
+    reaped = runtime.reaped is True
+    print(json.dumps(dict(mode='finite_paper_startup',
+        reason='finite_stage_halted' if runtime.halted else 'finite_scope_completed',
+        order_permission='none', execution_ready=False, automatic_retry=False,
+        inspection_health_only=reaped, finite_child_reaped=reaped)), flush=True)
+
+
 def main():
-    try:path,port=validate_environment(os.environ)
-    except ValueError as exc:
-        print(str(exc),file=sys.stderr);return 1
-    stop=threading.Event();children=[];experiment=None;experiment_observed=False
-    # One fixed-generation GET-only release probe. Its durable pre-network claim
-    # prevents a restart/redeploy from replaying a completed or uncertain attempt.
-    native_probe=NativeProbeSupervisor(enabled=not INSPECT_EXISTING_AUDIT_ONLY)
-    # Separate, hard GET-only observation runtime. Initialization uses an
-    # existing application-state anchor; never resets the fixed probe or orders.
-    readonly_runtime=ReadonlyRuntimeSupervisor(enabled=not INSPECT_EXISTING_AUDIT_ONLY)
-    schema_diagnostic=SchemaDiagnosticSupervisor(enabled=not INSPECT_EXISTING_AUDIT_ONLY)
-    # Proposed separate publication: inspect only the consumed diagnostic audit.
-    # No new broker sample, state initialization or replay fence reset.
-    diagnostic_audit=DiagnosticAuditSupervisor(enabled=True)
-    get_diagnostic=GetDiagnosticSupervisor();audit_started=False
-    for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
-        # Readonly completed-cohort verification, never the retired apply hook.
-        # No web/user routes or background workers start before verification.
-        if not run_startup_gate(inspection_only=INSPECT_EXISTING_AUDIT_ONLY,stop=stop):
+        _, port = validate_environment(os.environ)
+        if INSPECT_EXISTING_AUDIT_ONLY is not True:
+            raise ValueError('inspection_service_required')
+        finite_requested = _finite_requested()
+    except (ValueError, TypeError):
+        print(json.dumps(dict(mode='finite_paper_startup', reason='startup_configuration_refused',
+            order_permission='none', automatic_retry=False)), file=sys.stderr, flush=True)
+        return 1
+    stop = threading.Event()
+    children = []
+    finite_runtime = FinitePilotSupervisor(enabled=finite_requested)
+    finite_terminal = False
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    try:
+        # Keep the current synchronous, readonly completed-migration verifier.
+        # Neither migration apply authority nor its frozen receipt is changed.
+        if not run_startup_gate(inspection_only=True, stop=stop):
             return 0 if stop.is_set() else 1
-        web_entry='inspection_wsgi:app' if INSPECT_EXISTING_AUDIT_ONLY else 'wsgi:app'
-        children.append(subprocess.Popen([sys.executable,'-m','gunicorn','--bind','0.0.0.0:'+port,
-            '--workers','1','--threads','4','--timeout','120',web_entry]))
-        if not INSPECT_EXISTING_AUDIT_ONLY and os.environ.get('ENABLE_AUTO_RESEARCH')=='true':
-            children.append(subprocess.Popen([sys.executable,'research_worker.py','--db',path,'--interval','60']))
-        # Fixed approved one-shot child, separate from research and the GET-only UI.
-        # Its normal terminal exit must not restart or stop the web service.
-        if INSPECT_EXISTING_AUDIT_ONLY:
-            get_diagnostic.start()
-            if get_diagnostic.reaped:
-                diagnostic_audit.start();audit_started=True
-        else:
-            experiment=subprocess.Popen([sys.executable,'paper_renewal_worker.py'])
-            native_probe.start()
+        if stop.is_set():
+            return 0
+        children.append(subprocess.Popen([sys.executable, '-m', 'gunicorn',
+            '--bind', '0.0.0.0:' + port, '--workers', '1', '--threads', '4',
+            '--timeout', '120', 'inspection_wsgi:app'], stdin=subprocess.DEVNULL,
+            shell=False, close_fds=True))
+        # The frozen audit inspector intentionally is NOT invoked: recovery may
+        # append audit rows/change the runner, making its historical exact-state
+        # assumptions inapplicable. Its validation and code pin remain intact.
+        # Likewise never repeat the consumed Oct23 GET diagnostic or old loops.
+        if finite_requested and not stop.is_set():
+            finite_runtime.start()
         while not stop.wait(.5):
-            native_probe.poll()
-            readonly_runtime.poll()
-            # Diagnostic is separate from, and cannot recover, the halted runtime.
-            if (not INSPECT_EXISTING_AUDIT_ONLY and readonly_runtime.halted
-                    and readonly_runtime.active_stage is None):
-                schema_diagnostic.start()
-            schema_diagnostic.poll()
-            get_diagnostic.poll()
-            if INSPECT_EXISTING_AUDIT_ONLY and not audit_started and get_diagnostic.reaped:
-                diagnostic_audit.start();audit_started=True
-            diagnostic_audit.poll()
-            if any(child.poll() is not None for child in children):return 1
-            if experiment is not None and not experiment_observed:
-                code=experiment.poll()
-                if code is not None:
-                    experiment_observed=True
-                    if code!=0 and not stop.is_set():record_experiment_failure(code)
-                    elif code==0 and not stop.is_set():
-                        # The terminal legacy worker releases its account flock
-                        # before first-time inventory enrollment can begin.
-                        readonly_runtime.start()
+            if finite_requested and not finite_terminal:
+                finite_runtime.poll()
+                if finite_runtime.completed or finite_runtime.halted:
+                    finite_terminal = True
+                    finite_runtime.close()  # Bounded reap; never schedule again.
+                    _finite_terminal(finite_runtime)
+            if any(child.poll() is not None for child in children):
+                return 1
         return 0
     finally:
-        native_probe.close()
-        readonly_runtime.close()
-        schema_diagnostic.close()
-        get_diagnostic.close()
-        diagnostic_audit.close()
-        if experiment is not None:children.append(experiment)
+        finite_runtime.close()
         for child in children:
-            if child.poll() is None:child.terminate()
+            if child.poll() is None:
+                child.terminate()
         for child in children:
-            try:child.wait(timeout=10)
-            except subprocess.TimeoutExpired:child.kill();child.wait()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                try:
+                    child.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    print(json.dumps(dict(mode='finite_paper_startup', reason='web_reap_pending',
+                        order_permission='none', automatic_retry=False)), flush=True)
 
 
 if __name__=='__main__':raise SystemExit(main())

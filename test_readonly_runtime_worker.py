@@ -148,7 +148,7 @@ class ReadOnlyTransportTests(unittest.TestCase):
 
 
 class StartupHookTests(unittest.TestCase):
-    def test_existing_service_starts_only_separate_readonly_supervisor(self):
+    def test_rebased_service_keeps_legacy_readonly_supervisor_unlaunched(self):
         import serve
         web=Mock();web.poll.return_value=None
         worker=Mock();worker.poll.return_value=0
@@ -159,14 +159,12 @@ class StartupHookTests(unittest.TestCase):
              patch.object(serve.threading,'Event',return_value=stop), \
              patch.object(serve.signal,'signal'), \
              patch.object(serve,'NativeProbeSupervisor') as probe, \
-             patch.object(serve,'ReadonlyRuntimeSupervisor') as runtime:
+             patch.object(serve,'ReadonlyRuntimeSupervisor') as runtime, \
+             patch.object(serve,'run_startup_gate',return_value=True):
             self.assertEqual(serve.main(),0)
-        probe.assert_called_once_with(enabled=True)
-        runtime.assert_called_once_with(enabled=True)
-        runtime.return_value.start.assert_called_once()
-        runtime.return_value.poll.assert_called_once()
-        runtime.return_value.close.assert_called_once()
-        self.assertEqual(popen.call_count,2)
+        probe.assert_not_called();runtime.assert_not_called()
+        self.assertEqual(popen.call_count,1)
+        self.assertEqual(popen.call_args.args[0][-1],'inspection_wsgi:app')
 
 
 if __name__=='__main__':unittest.main()

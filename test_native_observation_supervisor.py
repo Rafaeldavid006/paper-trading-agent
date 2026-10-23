@@ -99,25 +99,24 @@ class NativeSupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             supervisor.NativeProbeSupervisor(enabled='true')
 
-    def test_serve_enables_watches_and_closes_separate_probe(self):
+    def test_rebased_serve_never_instantiates_probe_or_renewal(self):
         child = Mock()
         child.poll.return_value = None
         stop = Mock()
         stop.wait.side_effect = [False, True]
+        stop.is_set.return_value = False
         with patch.object(serve, 'validate_environment', return_value=('/tmp/events.db','8000')), \
              patch.dict(serve.os.environ, {'ENABLE_AUTO_RESEARCH':'false'}), \
              patch.object(serve.subprocess, 'Popen', return_value=child) as popen, \
              patch.object(serve.threading, 'Event', return_value=stop), \
              patch.object(serve.signal, 'signal'), \
              patch.object(serve, 'NativeProbeSupervisor') as factory, \
-             patch.object(serve, 'ReadonlyRuntimeSupervisor'):
+             patch.object(serve, 'ReadonlyRuntimeSupervisor') as readonly, \
+             patch.object(serve, 'run_startup_gate', return_value=True):
             self.assertEqual(serve.main(), 0)
-        factory.assert_called_once_with(enabled=True)
-        factory.return_value.start.assert_called_once()
-        factory.return_value.poll.assert_called_once()
-        factory.return_value.close.assert_called_once()
-        self.assertEqual(popen.call_count, 2)
-        self.assertEqual(popen.call_args.args[0][-1], 'paper_renewal_worker.py')
+        factory.assert_not_called();readonly.assert_not_called()
+        self.assertEqual(popen.call_count, 1)
+        self.assertEqual(popen.call_args.args[0][-1], 'inspection_wsgi:app')
 
 
 if __name__ == '__main__':

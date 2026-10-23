@@ -4,7 +4,7 @@ Only explicitly driven, account-fenced ticks may use this path. Tests inject a
 wire and prohibit sockets. A durable Decimal claim is not permission to send;
 all dispatch gates below remain mandatory. Uncertain writes are never replayed.
 """
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from decimal import Decimal
 import hashlib
@@ -156,6 +156,16 @@ class NativeExecutionObserver:
     def collect(self):
         started=self.now_ns(); mono_started=self.monotonic_ns()
         self.guard.check()
+        budget_factory=None
+        if self.guard._runtime_bundle is not None:
+            from native_existing_budget import ExistingStateRequestBudget
+            # Validate complete existing storage before ANY request, including
+            # legacy reserved-ID absence checks preceding the normal collector.
+            budget=ExistingStateRequestBudget(self.guard.state_database,self.guard)
+            def budget_factory(database):
+                require(str(database)==budget.database,'collector_budget_binding')
+                budget._check()
+                return budget
         before=self.lifecycle.status()
         rows=before['intents']; pending=[]; previous=[]
         with self.lifecycle.tx() as db:
@@ -179,7 +189,7 @@ class NativeExecutionObserver:
             return OwnedLedgerView(self.lifecycle.binding, revision, tuple(pending), tuple(previous))
         collector=NativeObservationCollector(database=self.guard.state_database, transport=self.wire,
             expected_fingerprint=self.lifecycle.binding, ledger_view=view, symbols=self.lifecycle.allowlist,
-            enabled=True,now_ns=self.now_ns,monotonic_ns=self.monotonic_ns)
+            enabled=True,now_ns=self.now_ns,monotonic_ns=self.monotonic_ns,budget_factory=budget_factory)
         result=collector.collect(); raw=result.native_arguments()
         by_id={o.client_order_id:o for o in result.snapshot.orders}
         raw_by_id={o['client_order_id']:o for o in raw['orders']}
@@ -210,8 +220,10 @@ class NativeExecutionObserver:
 class NativePaperDispatcher:
     """Durable one-attempt writes from Decimal claims; callable default disabled."""
     def __init__(self, lifecycle, guard, transport, *, enabled=False, now_ns=time.time_ns,
-                 monotonic_ns=time.monotonic_ns):
+                 monotonic_ns=time.monotonic_ns, pre_write_context=None):
         require(type(enabled) is bool and type(lifecycle) is Lifecycle, 'invalid_dispatcher')
+        require(pre_write_context is None or callable(pre_write_context), 'invalid_write_context')
+        self.pre_write_context=pre_write_context
         require(lifecycle.session_policy is not None and lifecycle.session_policy.max_entries<=4
                 and lifecycle.session_policy.max_loss<=Decimal('100'), 'bounded_risk_policy_required')
         self.lifecycle,self.guard,self.enabled,self.now_ns=lifecycle,guard,enabled,now_ns
@@ -315,26 +327,28 @@ class NativePaperDispatcher:
                 and asset.get('status')=='active' and asset.get('tradable') is True,'invalid_asset')
         require(qty==qty.to_integral_value() or asset.get('fractionable') is True,'fractional_exit_unavailable')
         self._gate()  # All clocks, quotes and controls are revalidated after asset I/O.
-        self._reserve('submit',cid,self.now_ns())
-        try:
-            # Uncertainty committed first; hold native control lock across POST so
-            # a committed stop cannot be missed between the final check and send.
-            with self.lifecycle.tx() as db:
-                c=db.execute('SELECT stopped,attention FROM control').fetchone()
-                require(not c['stopped'] and not c['attention'],'stopped_or_attention')
-                self._gate()
-                status,order=self.wire.call('POST','/v2/orders',payload)
-                require(status in (200,201),'submission_uncertain')
-                require(type(order) is dict and ('account_id' not in order or order['account_id']==raw['account']['id']),
-                        'response_account_mismatch')
-            self.lifecycle.record_response(cid,order,now_ns=self.now_ns())
-            with self.lifecycle.tx() as db:
-                db.execute("UPDATE native_dispatch SET state='observed' WHERE kind='submit' AND cid=?",(cid,))
-            return {'status':'submission_observed','order_permission':'paper_only','executable':False}
-        except Exception:
-            self._attention()
-            raise DispatchRefused('submission_uncertain_no_replay') from None
-
+        # Coordinator control locks span the final uncertainty marker and wire
+        # call. A committed runner/pipeline stop cannot be missed before sending.
+        with self.pre_write_context() if self.pre_write_context else nullcontext():
+            self._reserve('submit',cid,self.now_ns())
+            try:
+                # Uncertainty committed first; hold native control lock across POST so
+                # a committed stop cannot be missed between the final check and send.
+                with self.lifecycle.tx() as db:
+                    c=db.execute('SELECT stopped,attention FROM control').fetchone()
+                    require(not c['stopped'] and not c['attention'],'stopped_or_attention')
+                    self._gate()
+                    status,order=self.wire.call('POST','/v2/orders',payload)
+                    require(status in (200,201),'submission_uncertain')
+                    require(type(order) is dict and ('account_id' not in order or order['account_id']==raw['account']['id']),
+                            'response_account_mismatch')
+                self.lifecycle.record_response(cid,order,now_ns=self.now_ns())
+                with self.lifecycle.tx() as db:
+                    db.execute("UPDATE native_dispatch SET state='observed' WHERE kind='submit' AND cid=?",(cid,))
+                return {'status':'submission_observed','order_permission':'paper_only','executable':False}
+            except Exception:
+                self._attention()
+                raise DispatchRefused('submission_uncertain_no_replay') from None
     def cancel(self,cid):
         raw,snapshot,now=self._gate()
         order=next((o for o in snapshot.orders if o.client_order_id==cid),None)
@@ -343,21 +357,21 @@ class NativePaperDispatcher:
             row=db.execute('SELECT * FROM intents WHERE cid=?',(cid,)).fetchone()
             require(row is not None and db.execute('SELECT 1 FROM cancels WHERE cid=?',(cid,)).fetchone() is not None,'owned_cancel_claim_required')
             require((order.symbol,order.side,order.quantity,order.limit_price)==(row['symbol'],row['side'],Decimal(row['quantity']),Decimal(row['price'])),'cancel_identity')
-        self._reserve('cancel',cid,now)
-        try:
-            with self.lifecycle.tx() as db:
-                c=db.execute('SELECT stopped,attention FROM control').fetchone()
-                require(not c['stopped'] and not c['attention'],'stopped_or_attention')
-                self._gate()
-                status,_=self.wire.call('DELETE','/v2/orders/'+order.id)
-                require(status in (200,202,204),'cancel_uncertain')
-            # DELETE success is never terminal evidence; later full GET scan and
-            # owned-ID lookup must reconcile remaining quantity before any exit.
-            return {'status':'cancel_requested','terminal':False,'executable':False}
-        except Exception:
-            self._attention()
-            raise DispatchRefused('cancel_uncertain_no_replay') from None
-
+        with self.pre_write_context() if self.pre_write_context else nullcontext():
+            self._reserve('cancel',cid,now)
+            try:
+                with self.lifecycle.tx() as db:
+                    c=db.execute('SELECT stopped,attention FROM control').fetchone()
+                    require(not c['stopped'] and not c['attention'],'stopped_or_attention')
+                    self._gate()
+                    status,_=self.wire.call('DELETE','/v2/orders/'+order.id)
+                    require(status in (200,202,204),'cancel_uncertain')
+                # DELETE success is never terminal evidence; later full GET scan and
+                # owned-ID lookup must reconcile remaining quantity before any exit.
+                return {'status':'cancel_requested','terminal':False,'executable':False}
+            except Exception:
+                self._attention()
+                raise DispatchRefused('cancel_uncertain_no_replay') from None
 
 def _datetime_ceil(ns):
     return datetime(1970,1,1,tzinfo=timezone.utc)+timedelta(microseconds=(ns+999)//1000)

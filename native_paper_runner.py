@@ -1,7 +1,8 @@
 """Disabled explicit PAPER ticks. No startup wiring, scheduler or secret loading."""
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 
 from active_demo_pipeline import DemoPipeline, Quote, SafetyError
 from alpaca_schema import parse_latest_quotes, fresh
@@ -11,6 +12,7 @@ from native_decimal_port import NativeDecimalExecutionPort, nanoseconds
 from native_paper_execution import (NativePaperDispatcher, NativePaperHTTP, require,
     _datetime_ceil, bar_path)
 from native_account_guard import AccountGuardRefused
+from native_observation_collector import CollectionRefused
 from shadow_market_inputs import parse_bars
 
 
@@ -51,7 +53,12 @@ class NativePaperExecutionPort(NativeDecimalExecutionPort):
             Decimal(strategy_quote.bid),Decimal(strategy_quote.ask),strategy_quote.native_timestamp_ns)
             and strategy_quote.asof==_datetime_ceil(native.timestamp_ns),'strategy_native_quote_mismatch')
 
+    def write_capacity(self, required):
+        require(type(required) is int and 1<=required<=3,'invalid_write_capacity')
+        return self.dispatcher.guard.request_budget_remaining(now_ns=self.dispatcher.now_ns())>=required
+
     def submit(self, decision_id, now):
+        require(self.write_capacity(2),'write_budget_changed')
         receipt=super().submit(decision_id,now)
         if receipt.state=='uncertain':
             self.dispatcher.submit(receipt.client_order_id)
@@ -76,11 +83,13 @@ class NativePaperExecutionPort(NativeDecimalExecutionPort):
             raise SafetyError('session_entry_quota')
 
     def exit(self, row, quote, now):
+        require(self.write_capacity(2),'write_budget_changed')
         receipt=super().exit(row,quote,now)
         self.dispatcher.submit(receipt.client_order_id)
         return receipt
 
     def expire_entries(self, now):
+        if not self.write_capacity(1): return False
         previous=len(self.receipts)
         super().expire_entries(now)
         for receipt in self.receipts[previous:]:
@@ -118,20 +127,82 @@ class NativeMarketSource:
 
 
 class BoundedPaperRunner:
-    """One caller-driven tick under the shared account fence. No automatic loop."""
+    """Default-off coordinator: preflight/wait, then one already-observed tick.
+
+    No startup hook, approval generation, pilot dates or automatic loop. Full
+    budget admission and native preflight happen before strategy execution.
+    """
     def __init__(self, runner, *, enabled=False):
         require(type(enabled) is bool and type(runner) is DemoTickRunner and type(runner.port) is NativePaperExecutionPort,'native_runner_required')
         self.runner,self.enabled=runner,enabled
+        dispatcher=runner.port.dispatcher
+        binding=(id(runner),id(runner.port.pipeline))
+        prior=getattr(dispatcher,'_coordinator_control_binding',None)
+        require(prior is None or prior==binding,'conflicting_coordinator_controls')
+        if prior is None:
+            require(dispatcher.pre_write_context is None,'existing_write_context_requires_review')
+            dispatcher.pre_write_context=self._write_controls
+            dispatcher._coordinator_control_binding=binding
         if type(runner.port.dispatcher.wire.transport) is NativePaperHTTP:
             from primary_earnings_source import PrimaryEarningsSource
             require(type(runner.events) is PrimaryEarningsSource and type(runner.market) is NativeMarketSource,
                     'reviewed_primary_and_market_sources_required')
+    @contextmanager
+    def _write_controls(self):
+        runner=self.runner
+        # Binding belongs to the exact durable runner/pipeline, not whichever
+        # wrapper was constructed first. Outer enable is checked before tick.
+        require(runner.config.enabled and not runner.local_failed,'coordinator_write_disabled')
+        # Order: account guard -> runner -> decision pipeline -> native lifecycle.
+        # Preserve locks across dispatch, not across asset GET, so a stop already
+        # committed during acquisition is observed before any write attempt.
+        with runner.ledger.db() as control, runner.port.pipeline.db() as decisions:
+            control.execute('PRAGMA busy_timeout=50'); decisions.execute('PRAGMA busy_timeout=50')
+            control.execute('BEGIN IMMEDIATE'); decisions.execute('BEGIN IMMEDIATE')
+            row=control.execute('SELECT dirty,stopped,attention,stage FROM runner_control WHERE id=1').fetchone()
+            require(row is not None and row[:3]==(1,0,None)
+                    and row[3] in ('submit','exit','expire'),'runner_write_control_refused')
+            stopped=[tuple(r) for r in decisions.execute('SELECT stopped FROM demo_control')]
+            require(stopped==[(0,)] and decisions.execute('SELECT 1 FROM demo_attention LIMIT 1').fetchone() is None,
+                    'pipeline_write_control_refused')
+            yield
+
     def tick(self):
-        if not self.enabled:
+        if not self.enabled or not self.runner.config.enabled:
             return {'phase':'disabled','mode':'native_paper','order_permission':'none'}
+        runner=self.runner; dispatch=runner.port.dispatcher
+        if runner.local_failed:
+            return {'phase':'manual_attention','reason':'local_failure','mode':'native_paper','order_permission':'none'}
+        begun=False
         try:
-            with self.runner.port.dispatcher.tick_scope():
-                return self.runner.tick()
+            with localcontext(Context(prec=60)), dispatch.tick_scope():
+                # Exclusive full-window admission precedes any account I/O or
+                # durable tick/order claim. The same guard hold spans the cycle.
+                dispatch.guard.admit_cycle(now_ns=dispatch.now_ns())
+                if not runner.ledger.begin(runner.clock(),runner.config.max_tick_gap_seconds):
+                    state=runner.ledger.status()
+                    return {'phase':'stopped' if state['stopped'] else 'manual_attention',
+                            'reason':state['attention'],'mode':'native_paper','order_permission':'none'}
+                begun=True
+                try:
+                    runner.port.reconcile(runner.pulse('reconcile'))
+                except CollectionRefused as exc:
+                    if exc.code!='closed_session': raise
+                    return runner._wait_started_tick('closed_session',order_permission='none')
+                now=runner.clock()
+                # Missing opening bars delay acquisition only. Existing owned
+                # cancellation and reduction work runs first, under the same cap.
+                waiting=(now.replace(second=0,microsecond=0)-timedelta(minutes=6)
+                         <_datetime_ceil(runner.port.session_open_ns))
+                return runner._run_started_tick(reconciled=True,
+                    entry_wait='waiting_regular_bar_window' if waiting else None)
+        except AccountGuardRefused as exc:
+            if not begun and str(exc)=='cycle_budget_wait':
+                return {'phase':'waiting_request_budget','mode':'native_paper','order_permission':'none'}
+            if begun: return runner._failed_tick()
+            return {'phase':'manual_attention','reason':'account_fence_or_tick_refused',
+                    'mode':'native_paper','order_permission':'none'}
         except Exception:
+            if begun: return runner._failed_tick()
             return {'phase':'manual_attention','reason':'account_fence_or_tick_refused',
                     'mode':'native_paper','order_permission':'none'}

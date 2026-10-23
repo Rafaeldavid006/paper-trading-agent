@@ -20,9 +20,11 @@ from native_observation_worker import load_owned_ledger
 from readonly_runtime_worker import serialized
 from runtime_state_bundle import RuntimeStateBundle,FIXED_PATHS,_database,_SIDECARS
 
-ENABLE_APPROVED_GET_DIAGNOSTIC=True
-APPROVED_START_NS=1792762560000000000
-APPROVED_END_NS=1792763160000000000
+# The Oct23 attempt is consumed. Keep its receipt/generation intact; finite
+# recovery uses its own separately approved reconciliation, never this sample.
+ENABLE_APPROVED_GET_DIAGNOSTIC=False
+APPROVED_START_NS=None
+APPROVED_END_NS=None
 GENERATION='native-get-diagnostic-20261023-g1'
 SQL=('CREATE TABLE native_get_diagnostic_claim(id INTEGER PRIMARY KEY CHECK(id=1),'
      'generation TEXT NOT NULL,code_hash TEXT NOT NULL,claimed_ns INTEGER NOT NULL,'

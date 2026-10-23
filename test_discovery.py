@@ -134,11 +134,13 @@ class DiscoveryTests(unittest.TestCase):
         with patch.dict(os.environ,{'ENABLE_AUTO_RESEARCH':'false'}):
             with self.assertRaises(ValueError):cycle(self.s,price_transport=lambda *args:[],collector=lambda *_:self.fail('called'))
 
-    def test_supervisor_requires_persistent_store_for_automatic_mode(self):
+    def test_inspection_supervisor_does_not_enable_automatic_research_from_environment(self):
         from serve import validate_environment
         env=dict(os.environ,FLASK_SECRET_KEY='x'*32,DASHBOARD_PASSWORD='x'*20,
                  EVENT_DB=self.tmp.name+'/db',PERSISTENT_STORAGE_CONFIRMED='false',
                  ALPACA_API_KEY='fake',ALPACA_SECRET_KEY='fake')
-        with self.assertRaisesRegex(ValueError,'persistent'):validate_environment(env)
-        env['PERSISTENT_STORAGE_CONFIRMED']='true'
+        # Historical automatic flags are inert in the inspection-only release.
+        env.update(ENABLE_AUTO_RESEARCH='true',ENABLE_WEB_RESEARCH='true')
+        for key in ('ALPACA_API_KEY','ALPACA_SECRET_KEY','OPENAI_API_KEY','OPENAI_MODEL'):
+            env.pop(key,None)
         self.assertEqual(validate_environment(env)[0],self.tmp.name+'/db')

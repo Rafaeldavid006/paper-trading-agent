@@ -291,7 +291,7 @@ class StartupTests(unittest.TestCase):
         stop=Mock();stop.is_set.side_effect=[False,True]
         with patch.object(module.migration_gate,'_completed_attempt',return_value=True):
             self.assertFalse(verify_completed_storage(inspection_only=True,stop=stop))
-    def test_full_inspection_startup_waits_for_diagnostic_reap_then_only_audit(self):
+    def test_rebased_startup_retires_get_and_audit_children(self):
         import serve
         web=Mock();web.poll.return_value=None;web.wait.return_value=-9
         stop=Mock();stop.wait.side_effect=[False,False,True];stop.is_set.return_value=False
@@ -310,10 +310,10 @@ class StartupTests(unittest.TestCase):
              patch.dict(serve.os.environ,{'ENABLE_AUTO_RESEARCH':'true'}):
             self.assertEqual(serve.main(),0)
         spawn.assert_called_once();self.assertEqual(spawn.call_args.args[0][-1],'inspection_wsgi:app')
-        diagnostic_child.start.assert_called_once();diagnostic_child.close.assert_called_once()
-        audit.return_value.start.assert_called_once()
+        diagnostic_child.start.assert_not_called();diagnostic_child.poll.assert_not_called()
+        diagnostic_child.close.assert_not_called();audit.assert_not_called()
         for worker in (probe,runtime,old_diagnostic):
-            worker.assert_called_once_with(enabled=False);worker.return_value.start.assert_not_called()
+            worker.assert_not_called()
     def test_failed_completion_starts_no_child(self):
         import serve
         stop=Mock();stop.is_set.return_value=False

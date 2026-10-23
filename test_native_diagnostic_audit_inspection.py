@@ -152,7 +152,7 @@ class AuditSupervisorTests(unittest.TestCase):
         supervisor._expire(); child.kill.assert_called_once()
         supervisor.start(); self.assertEqual(spawn.call_count, 1)
 
-    def test_startup_launches_only_new_local_inspector_not_old_workers(self):
+    def test_rebased_startup_retires_historical_inspector_and_old_workers(self):
         import serve
         self.assertIs(serve.INSPECT_EXISTING_AUDIT_ONLY, True)
         web = Mock(); web.poll.return_value = None
@@ -170,11 +170,8 @@ class AuditSupervisorTests(unittest.TestCase):
             self.assertEqual(spawn.call_count, 1)
             self.assertEqual(spawn.call_args.args[0][1:3], ['-m', 'gunicorn'])
             for old in (probe, runtime, diagnostic):
-                old.assert_called_once_with(enabled=False)
-                old.return_value.start.assert_not_called()
-            audit.assert_called_once_with(enabled=True)
-            audit.return_value.start.assert_called_once()
-            audit.return_value.close.assert_called_once()
+                old.assert_not_called()
+            audit.assert_not_called()
 
     def test_inspection_startup_does_not_read_unused_provider_credentials(self):
         import serve

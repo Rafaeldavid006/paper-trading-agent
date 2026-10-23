@@ -131,7 +131,9 @@ class AttemptSurveyTests(unittest.TestCase):
         defaults={node.targets[0].id:ast.literal_eval(node.value) for node in ast.parse(Path(serve.__file__).read_text()).body if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id=='INSPECT_EXISTING_AUDIT_ONLY'}
         self.assertIs(defaults['INSPECT_EXISTING_AUDIT_ONLY'],True)
         self.assertIsNot(serve.DiagnosticAuditSupervisor,survey.FailedAttemptSurveySupervisor)
-        self.assertEqual(preflight.source_digest(),launcher.EXPECTED_CORE_CODE_DIGEST)
+        # This finite rebase is deliberately not the old apply code cohort.
+        # Retain the frozen apply receipt/pin, rather than repinning old authority.
+        self.assertNotEqual(preflight.source_digest(),launcher.EXPECTED_CORE_CODE_DIGEST)
         self.assertNotEqual(preflight.source_digest(),survey.CORE_DIGEST)
         with patch.object(launcher,'_reserve_attempt',side_effect=AssertionError('no old apply reservation')):
             self.assertTrue(launcher.run_startup_gate(inspection_only=True,stop=threading.Event()))

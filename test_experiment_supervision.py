@@ -21,53 +21,40 @@ class Stop:
     def is_set(self):return self.ticks<=0
 
 class SupervisionTests(unittest.TestCase):
+    """Current readonly service never starts the historical renewal worker."""
     def setUp(self):
+        self.enterContext(patch.object(serve, 'run_startup_gate', return_value=True))
         self.probe = self.enterContext(patch.object(serve, 'NativeProbeSupervisor'))
         self.readonly = self.enterContext(patch.object(serve, 'ReadonlyRuntimeSupervisor'))
+        self.enterContext(patch.object(serve, 'validate_environment', return_value=('/tmp/mock-events.sqlite','8000')))
+        self.enterContext(patch.object(serve.signal, 'signal'))
+        self.failure=self.enterContext(patch.object(serve,'record_experiment_failure'))
 
-    def exercise(self,status,stop_ticks=5):
-        web=Child();worker=Child(status)
-        with patch.object(serve,'validate_environment',return_value=('/tmp/mock-events.sqlite','8000')),patch.dict(serve.os.environ,{'ENABLE_AUTO_RESEARCH':'false'}),patch.object(serve.subprocess,'Popen',side_effect=[web,worker]) as popen,patch.object(serve.threading,'Event',return_value=Stop(stop_ticks)),patch.object(serve.signal,'signal'),patch.object(serve,'record_experiment_failure',create=True) as failure:
+    def exercise(self, web, stop_ticks=5):
+        with patch.object(serve.subprocess,'Popen',return_value=web) as popen, \
+             patch.object(serve.threading,'Event',return_value=Stop(stop_ticks)):
             result=serve.main()
-        return result,worker,failure,popen
+        self.failure.assert_not_called();self.probe.assert_not_called();self.readonly.assert_not_called()
+        popen.assert_called_once();self.assertEqual(popen.call_args.args[0][-1],'inspection_wsgi:app')
+        return result
 
-    def test_killed_worker_records_failure_once_without_respawn_or_web_failure(self):
-        result,worker,failure,popen=self.exercise(-9)
-        self.assertEqual(0,result)
-        failure.assert_called_once_with(-9)
-        self.assertEqual(2,popen.call_count)
-        self.assertGreater(worker.polls,1)
+    def test_healthy_web_lives_until_shutdown_without_legacy_worker(self):
+        web=Child();self.assertEqual(self.exercise(web),0);self.assertEqual(web.status,-15)
 
-    def test_positive_failure_exit_is_distinguished_from_success(self):
-        _,_,failure,popen=self.exercise(2)
-        failure.assert_called_once_with(2)
-        self.assertEqual(2,popen.call_count)
+    def test_web_death_returns_failure_without_restart(self):
+        for status in (0,1,-9):
+            with self.subTest(status=status):self.assertEqual(self.exercise(Child(status)),1)
 
-    def test_normal_terminal_exit_never_reports_failure_or_respawns(self):
-        _,_,failure,popen=self.exercise(0)
-        failure.assert_not_called();self.assertEqual(2,popen.call_count)
-        self.readonly.return_value.start.assert_called_once()
-
-    def test_readonly_enrollment_waits_for_legacy_success(self):
-        self.exercise(None)
-        self.readonly.return_value.start.assert_not_called()
-        self.exercise(2)
-        self.readonly.return_value.start.assert_not_called()
-
-    def test_signal_after_wait_before_report_suppresses_shutdown_alert(self):
-        web=Child();worker=Child(-9);stop=Stop()
-        original=worker.poll
-        def interrupted_poll():
-            stop.set()
-            return original()
-        with patch.object(serve,'validate_environment',return_value=('/tmp/mock-events.sqlite','8000')),patch.dict(serve.os.environ,{'ENABLE_AUTO_RESEARCH':'false'}),patch.object(serve.subprocess,'Popen',side_effect=[web,worker]),patch.object(serve.threading,'Event',return_value=stop),patch.object(serve.signal,'signal'),patch.object(worker,'poll',side_effect=interrupted_poll),patch.object(serve,'record_experiment_failure') as failure:
-            self.assertEqual(0,serve.main())
-        failure.assert_not_called()
-
-    def test_intentional_supervisor_shutdown_does_not_report_termination(self):
-        _,worker,failure,popen=self.exercise(None,1)
-        failure.assert_not_called();self.assertEqual(-15,worker.status)
-        self.assertEqual(2,popen.call_count)
+    def test_shutdown_reap_is_bounded_even_if_kill_is_uncertain(self):
+        import subprocess
+        from unittest.mock import Mock
+        web=Mock();web.poll.return_value=None
+        web.wait.side_effect=subprocess.TimeoutExpired('FIXED',1)
+        with patch('builtins.print') as emit:
+            self.assertEqual(self.exercise(web,1),0)
+        web.terminate.assert_called_once();web.kill.assert_called_once()
+        self.assertEqual([c.kwargs['timeout'] for c in web.wait.call_args_list],[10,1])
+        self.assertEqual(json.loads(emit.call_args.args[0])['reason'],'web_reap_pending')
 
 class FailureRecordingTests(unittest.TestCase):
     def setUp(self):
