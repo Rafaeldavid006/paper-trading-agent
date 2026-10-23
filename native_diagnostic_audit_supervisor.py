@@ -1,4 +1,4 @@
-"""Fixed read-only local inspection child. No repeated collector invocation."""
+"""Fixed bounded preflight plus existing-audit child. No provider or apply path."""
 import json
 from pathlib import Path
 import subprocess
@@ -14,7 +14,7 @@ class DiagnosticAuditSupervisor(NativeProbeSupervisor):
                     or Path(args[1]).name != 'native_observation_worker.py'):
                 raise ValueError('audit_inspection_command_refused')
             return spawn([sys.executable, str(Path(__file__).resolve().with_name(
-                'native_diagnostic_audit_inspection.py')), '--inspect-existing-audit'],
+                'native_restart_preflight.py')), '--inspect-restart-preflight'],
                 stdin=subprocess.DEVNULL, stdout=None, stderr=subprocess.DEVNULL,
                 shell=False, close_fds=True)
         super().__init__(enabled=enabled, popen=fixed_spawn, **kwargs)

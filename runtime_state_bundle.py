@@ -307,6 +307,8 @@ class RuntimeStateBundle:
         self.paths = MappingProxyType(supplied)
         self.binding = expected_account_fingerprint
         self._pinned = None
+        self._restart = None
+        self._restart_contract = None
         self._enrolling = False
         if not test_only:
             try:
@@ -318,6 +320,15 @@ class RuntimeStateBundle:
 
     def _identity(self, role):
         return _private(self.paths[role], public_read=role == 'anchor')
+
+    def _reference_identity(self, role):
+        return self._restart.references[role] if self._restart is not None else self._identity(role)
+
+    def guard_identities(self):
+        """Fresh full-cohort capability; never a caller-supplied ignore-device flag."""
+        self.verify()
+        return (dict(self._pinned), dict(self._restart.references) if self._restart is not None
+                else dict(self._pinned), self._restart is not None)
 
     def _anchor_binding(self):
         return _digest([GENERATION, self.binding, dict(self.paths)])
@@ -347,12 +358,12 @@ class RuntimeStateBundle:
             records.append(row)
         return _digest(records)
 
-    def _anchor_row(self, db):
+    def _anchor_row(self, db, *, migration_reference=None):
         self._anchor_schema(db)
         row = _singleton(db, _ANCHOR_TABLE)
         _require(row[:4] == (1, VERSION, GENERATION, self._anchor_binding()),
                  'bundle_anchor_binding_mismatch')
-        _require(row[4:6] == self._identity('anchor'), 'bundle_anchor_replaced')
+        _require(row[4:6] == (self._reference_identity('anchor') if migration_reference is None else migration_reference), 'bundle_anchor_replaced')
         _require(type(row[6]) is str and re.fullmatch('[0-9a-f]{64}', row[6])
                  and type(row[7]) is str and re.fullmatch('[0-9a-f]{64}', row[7]),
                  'bundle_anchor_corrupt')
@@ -486,26 +497,29 @@ class RuntimeStateBundle:
                      and (row[4] is None or type(row[4]) is str)
                      and type(row[5]) is str, 'bundle_runner_state_corrupt')
 
-    def _inspect(self, identities, *, stamped):
+    def _inspect(self, identities, *, stamped, references=None):
+        references = identities if references is None else references
         result = []
         for role in DB_ROLES:
             with _database(self.paths[role], identities[role]) as db:
                 schema = _schema(db, role)
-                self._content(db, role, identities)
+                self._content(db, role, references)
                 if role != 'legacy' and stamped:
                     actual = (db.execute('PRAGMA application_id').fetchone()[0],
                               db.execute('PRAGMA user_version').fetchone()[0])
-                    _require(actual == _stamp(role), 'bundle_generation_mismatch')
-                result.append((role, self.paths[role], *identities[role], schema))
+                    _require(actual == (
+                        __import__('native_restart_identity').stamp(self._restart.cohort, role)
+                        if self._restart is not None else _stamp(role)), 'bundle_generation_mismatch')
+                result.append((role, self.paths[role], *references[role], schema))
         # Validate the complete immutable legacy account/intent shape without
         # constructing an execution adapter or writing any legacy field.
         view = load_owned_ledger(self.paths['legacy'])
         _require(view.account_fingerprint == self.binding, 'bundle_account_mismatch')
         result.append(('legacy_lock', self.paths['legacy_lock'],
-                       *identities['legacy_lock'], None))
+                       *references['legacy_lock'], None))
         with _database(self.paths['anchor'], identities['anchor'], public_read=True) as db:
             anchor_schema = self._anchor_schema(db)
-        result.append(('anchor', self.paths['anchor'], *identities['anchor'], anchor_schema))
+        result.append(('anchor', self.paths['anchor'], *references['anchor'], anchor_schema))
         return sorted(result)
 
     def _read_seal(self, identity):
@@ -519,9 +533,11 @@ class RuntimeStateBundle:
         finally:
             os.close(fd)
         value = _load(raw)
-        _require(type(value) is dict and set(value) ==
-                 {'format', 'version', 'generation', 'fingerprint', 'initialized',
-                  'manifest_identity', 'manifest_digest'}, 'bundle_state_corrupt')
+        expected_keys = {'format', 'version', 'generation', 'fingerprint', 'initialized',
+                         'manifest_identity', 'manifest_digest'}
+        if self._restart is not None:
+            expected_keys.add('restart_identity')
+        _require(type(value) is dict and set(value) == expected_keys, 'bundle_state_corrupt')
         _require(value['format'] == 'native_runtime_state_seal' and
                  type(value['version']) is int and value['version'] == VERSION and
                  value['generation'] == GENERATION and value['fingerprint'] == self.binding,
@@ -535,17 +551,27 @@ class RuntimeStateBundle:
             identities = {role: self._identity(role) for role in self.paths}
             if self._pinned is not None:
                 _require(identities == self._pinned, 'bundle_file_replaced')
+            if not self._enrolling:
+                import native_restart_identity
+                adopted = native_restart_identity.load(self, identities)
+                if self._restart_contract is not None:
+                    _require(adopted is not None and adopted.contract == self._restart_contract,
+                             'bundle_restart_identity_changed')
+                self._restart = adopted
+                if adopted is not None:
+                    self._restart_contract = adopted.contract
+            references = dict(self._restart.references) if self._restart is not None else identities
             seal = self._read_seal(identities['seal'])
             with _database(self.paths['anchor'], identities['anchor'], public_read=True) as db:
                 anchor = self._anchor_row(db)
             if not self._enrolling:
-                _require(anchor[8:] == ('completed', *identities['seal'],
-                         *identities['manifest'], seal['manifest_digest']),
+                _require(anchor[8:] == ('completed', *references['seal'],
+                         *references['manifest'], seal['manifest_digest']),
                          'bundle_anchor_incomplete_or_changed')
             else:
                 _require(anchor[8:] == ('provisioning', None, None, None, None, None),
                          'bundle_anchor_incomplete_or_changed')
-            _require(seal['manifest_identity'] == list(identities['manifest']),
+            _require(seal['manifest_identity'] == list(references['manifest']),
                      'bundle_manifest_replaced')
             with _database(self.paths['manifest'], identities['manifest']) as db:
                 _require(db.execute('PRAGMA quick_check(1)').fetchall() == [('ok',)],
@@ -555,13 +581,19 @@ class RuntimeStateBundle:
                 _require(names == [('table', 'bundle_binding'), ('table', 'bundle_files')],
                          'bundle_manifest_corrupt')
                 binding = _singleton(db, 'bundle_binding')
-                _require(binding == (1, VERSION, GENERATION, self.binding, 1, *identities['seal']),
+                _require(binding == (1, VERSION, GENERATION, self.binding, 1, *references['seal']),
                          'bundle_manifest_binding_mismatch')
                 records = db.execute('SELECT role,path,device,inode,schema_hash '
                                      'FROM bundle_files ORDER BY role').fetchall()
                 _require(seal['manifest_digest'] == _digest([binding, records]),
                          'bundle_manifest_corrupt')
-            expected = self._inspect(identities, stamped=True)
+            if self._restart is not None:
+                metadata = self._restart.metadata
+                _require(metadata['manifest_digest'] == seal['manifest_digest']
+                         and metadata['history'] == list(anchor[6:8])
+                         and metadata['schemas'] == {r[0]: r[4] for r in records},
+                         'bundle_restart_metadata_changed')
+            expected = self._inspect(identities, stamped=True, references=references)
             _require(records == expected, 'bundle_inventory_or_schema_changed')
             _require({role: self._identity(role) for role in self.paths} == identities,
                      'bundle_file_replaced')
@@ -621,6 +653,17 @@ class RuntimeStateBundle:
             # writer lock: corrupt or zero-byte app files must not be initialized.
             with _database(self.paths['anchor'], anchor_id, public_read=True) as db:
                 self._anchor_schema(db, enrolled=False)
+                existing = db.execute('SELECT name FROM sqlite_master WHERE name IN (?,?)',
+                                      (_ANCHOR_TABLE, 'native_restart_identity')).fetchall()
+                if (_ANCHOR_TABLE,) in existing:
+                    self._anchor_schema(db)
+                    _require(_singleton(db, _ANCHOR_TABLE)[8] != 'provisioning',
+                             'bundle_anchor_provision_incomplete')
+            # A previously enrolled or partially migrated cohort is verification
+            # only. Load its restart identity before any old physical-reference
+            # comparison, and never open a writable enrollment path on restart.
+            if existing:
+                return self.verify()
             already = False
             with _database(self.paths['anchor'], anchor_id, write=True, public_read=True) as db:
                 self._anchor_schema(db, enrolled=False)

@@ -134,7 +134,7 @@ class LegacyReconciliation:
 
 class SharedAccountGuard:
     def __init__(self, legacy_database, lifecycle_database, expected_account_fingerprint,
-                 *, enabled=False, state_database=FIXED_GUARD_PATH, test_only=False):
+                 *, enabled=False, state_database=FIXED_GUARD_PATH, test_only=False, runtime_bundle=None):
         _require(type(enabled) is bool and type(test_only) is bool, 'invalid_enable')
         _require(type(expected_account_fingerprint) is str
                  and re.fullmatch('[0-9a-f]{64}', expected_account_fingerprint), 'invalid_binding')
@@ -145,6 +145,10 @@ class SharedAccountGuard:
         _require(len({self.legacy_database, self.lifecycle_database, self.state_database}) == 3,
                  'separate_databases_required')
         self.binding = expected_account_fingerprint
+        self._runtime_bundle = runtime_bundle
+        self._bundle_current = None
+        self._enrolled = None
+        self._migrated = False
         self.enabled = enabled
         self._source = None
         self._held = False
@@ -242,20 +246,64 @@ class SharedAccountGuard:
                 'SELECT * FROM ' + table + ' ORDER BY ' + order)]
         return int(_digest(tables), 16)
 
+    def _refresh_bundle(self):
+        """Only a fresh complete verifier can authorize portable enrolled IDs."""
+        from runtime_state_bundle import RuntimeStateBundle, _stamp, _database, _private as bundle_private
+        if self._runtime_bundle is None:
+            # Standalone/provisioning callers retain strict physical identities.
+            # A migrated or partially migrated guard never becomes standalone.
+            if os.path.lexists(self.state_database):
+                identity, _ = _private(self.state_database)
+                fd = os.open(self.state_database, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                try:
+                    info = os.fstat(fd)
+                    _require((info.st_dev, info.st_ino) == identity, 'guard_database_replaced')
+                    head = os.read(fd, 100)
+                finally:
+                    os.close(fd)
+                _require(_private(self.state_database)[0] == identity, 'guard_database_replaced')
+                if len(head) == 100 and head[:16] == b'SQLite format 3\0':
+                    actual = (int.from_bytes(head[68:72], 'big'), int.from_bytes(head[60:64], 'big'))
+                    _require(actual in ((0, 0), _stamp('guard')), 'restart_identity_context_required')
+            anchor = os.environ.get('EVENT_DB')
+            if anchor and os.path.exists(anchor):
+                import native_restart_identity
+                with _database(anchor, bundle_private(anchor, public_read=True), public_read=True) as db:
+                    _require(not native_restart_identity.table_present(db), 'restart_identity_context_required')
+            return
+        bundle = self._runtime_bundle
+        _require(type(bundle) is RuntimeStateBundle and bundle.binding == self.binding,
+                 'restart_identity_context_invalid')
+        expected = {'legacy': self.legacy_database, 'lifecycle': self.lifecycle_database,
+                    'guard': self.state_database, 'legacy_lock': self.legacy_database + '.experiment.lock'}
+        _require(all(bundle.paths[role] == path for role, path in expected.items()),
+                 'restart_identity_context_invalid')
+        current, enrolled, migrated = bundle.guard_identities()
+        for role, prior in (('legacy', self._source_identity), ('lifecycle', self._lifecycle_identity),
+                            ('guard', self._state_identity)):
+            _require(prior is None or current[role] == prior, 'restart_identity_physical_changed')
+        self._bundle_current, self._enrolled, self._migrated = current, enrolled, migrated
+
     def _pin(self):
-        return (1, 1, self.binding, self.legacy_database, *self._source_identity,
-                self.lifecycle_database, *self._lifecycle_identity, str(self.legacy_revision))
+        source = self._enrolled['legacy'] if self._migrated else self._source_identity
+        lifecycle = self._enrolled['lifecycle'] if self._migrated else self._lifecycle_identity
+        return (1, 1, self.binding, self.legacy_database, *source,
+                self.lifecycle_database, *lifecycle, str(self.legacy_revision))
 
     @contextmanager
     def _state(self, *, initialize=False):
         db = None
         try:
-            identity, created = _private(self.state_database, create=initialize)
+            self._refresh_bundle()
+            identity, created = _private(self.state_database, create=initialize and not self._migrated)
+            if self._bundle_current is not None:
+                _require(identity == self._bundle_current['guard'], 'guard_database_replaced')
             if self._state_identity is not None:
                 _require(identity == self._state_identity, 'guard_database_replaced')
             self._state_identity = identity
             db = sqlite3.connect(Path(self.state_database).as_uri() + '?mode=rw', uri=True,
                                  timeout=0.05, isolation_level=None)
+            _require(_private(self.state_database)[0] == identity, 'guard_database_replaced')
             db.execute('PRAGMA trusted_schema=OFF')
             db.execute('PRAGMA synchronous=FULL')
             db.execute('BEGIN IMMEDIATE')
@@ -275,7 +323,11 @@ class SharedAccountGuard:
             _require(len(binding) == 1 and binding[0][:-1] == self._pin(), 'guard_binding_mismatch')
             _require(type(binding[0][-1]) is int and 0 <= binding[0][-1] <= MAX_NS, 'guard_state_corrupt')
             yield db
+            _require(_private(self.state_database)[0] == identity, 'guard_database_replaced')
             db.commit()
+            _require(_private(self.state_database)[0] == identity, 'guard_database_replaced')
+            if self._runtime_bundle is not None:
+                self._refresh_bundle()
         except AccountGuardRefused:
             raise
         except Exception:
@@ -297,10 +349,15 @@ class SharedAccountGuard:
         fd = None
         body_started = False
         try:
+            self._refresh_bundle()
             self._source_identity, _ = _private(self.legacy_database)
             self._lifecycle_identity, _ = _private(self.lifecycle_database)
             lock = self.legacy_database + '.experiment.lock'
             identity, _ = _private(lock)
+            if self._bundle_current is not None:
+                _require(self._source_identity == self._bundle_current['legacy']
+                         and self._lifecycle_identity == self._bundle_current['lifecycle']
+                         and identity == self._bundle_current['legacy_lock'], 'restart_identity_physical_changed')
             fd = os.open(lock, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
             info = os.fstat(fd)
             _require((info.st_dev, info.st_ino) == identity, 'database_replaced')
@@ -355,6 +412,7 @@ class SharedAccountGuard:
         """Fresh local binding, terminal-state and stop check, only inside hold."""
         self._inside()
         try:
+            self._refresh_bundle()
             _require(_private(self.legacy_database)[0] == self._source_identity, 'legacy_database_replaced')
             _require(_private(self.lifecycle_database)[0] == self._lifecycle_identity, 'native_database_replaced')
             current, _ = self._read_source()

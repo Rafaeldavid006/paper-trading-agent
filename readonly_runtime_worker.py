@@ -70,10 +70,10 @@ class NoNetwork:
         raise ValueError('network_unavailable_in_initialization')
 
 
-def components(paths,binding,*,broker=None,source_transport=None,now_ns=time.time_ns,test_only=False):
+def components(paths,binding,*,broker=None,source_transport=None,now_ns=time.time_ns,test_only=False,bundle=None):
     life=Lifecycle(paths['lifecycle'],binding,allowlist=('NVDA',),session_risk_policy=SessionRiskPolicy(4,Decimal('100')))
     guard=SharedAccountGuard(paths['legacy'],paths['lifecycle'],binding,enabled=True,
-        state_database=paths['guard'],test_only=test_only)
+        state_database=paths['guard'],test_only=test_only,runtime_bundle=bundle)
     dispatch=NativePaperDispatcher(life,guard,broker or NoNetwork(),enabled=False,now_ns=now_ns)
     pipeline=DemoPipeline(paths['decision'],Config(enabled=True,allowlist=('NVDA',)))
     runner=RunnerLedger(paths['runner'])
@@ -196,7 +196,7 @@ def run_phase(phase,*,paths=None,test_only=False,environ=None,now_ns=time.time_n
     if phase=='initialize':
         bundle.initialize_once(initialize=lambda p:initialize_components(p,binding,now_ns=now_ns,test_only=test_only))
         with serialized(bundle):
-            life,guard,dispatch,pipeline,runner,source,port=components(bundle.paths,binding,now_ns=now_ns,test_only=test_only)
+            life,guard,dispatch,pipeline,runner,source,port=components(bundle.paths,binding,now_ns=now_ns,test_only=test_only,bundle=bundle)
             _pristine_read_mode(life,runner)
             with sqlite3.connect(Path(bundle.paths['source']).as_uri()+'?mode=ro',uri=True) as db:
                 require(db.execute('SELECT busy FROM primary_meta WHERE id=1').fetchone()==(0,),'source_interrupted')
@@ -212,7 +212,7 @@ def run_phase(phase,*,paths=None,test_only=False,environ=None,now_ns=time.time_n
             broker=broker_factory(key,secret,enabled=True)
         source_transport=source_factory(enabled=phase=='source')
         life,guard,dispatch,pipeline,runner,source,port=components(bundle.paths,binding,broker=broker,
-            source_transport=source_transport,now_ns=now_ns,test_only=test_only)
+            source_transport=source_transport,now_ns=now_ns,test_only=test_only,bundle=bundle)
         bundle.verify();_pristine_read_mode(life,runner)
         require(runner.begin(_datetime_ceil(now_ns()),120),'runtime_begin_refused')
         try:
