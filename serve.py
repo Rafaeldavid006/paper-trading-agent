@@ -11,8 +11,9 @@ import threading
 from native_observation_supervisor import NativeProbeSupervisor
 from readonly_runtime_supervisor import ReadonlyRuntimeSupervisor
 from native_schema_diagnostic_supervisor import SchemaDiagnosticSupervisor
-from native_diagnostic_audit_supervisor import DiagnosticAuditSupervisor
-from native_restart_apply_once import run_startup_gate
+from native_postmigration_supervisors import ExistingAuditSupervisor as DiagnosticAuditSupervisor
+from native_postmigration_supervisors import GetDiagnosticSupervisor
+from native_postmigration_supervisors import verify_completed_storage as run_startup_gate
 
 # This proposed release inspects already-existing evidence only. It deliberately
 # does not launch any historical probe, schema diagnostic or trading worker.
@@ -76,10 +77,11 @@ def main():
     # Proposed separate publication: inspect only the consumed diagnostic audit.
     # No new broker sample, state initialization or replay fence reset.
     diagnostic_audit=DiagnosticAuditSupervisor(enabled=True)
+    get_diagnostic=GetDiagnosticSupervisor();audit_started=False
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     try:
-        # Disabled unless a separately approved fixed migration release enables
-        # it. No web/user routes or background workers start before child reap.
+        # Readonly completed-cohort verification, never the retired apply hook.
+        # No web/user routes or background workers start before verification.
         if not run_startup_gate(inspection_only=INSPECT_EXISTING_AUDIT_ONLY,stop=stop):
             return 0 if stop.is_set() else 1
         web_entry='inspection_wsgi:app' if INSPECT_EXISTING_AUDIT_ONLY else 'wsgi:app'
@@ -90,7 +92,9 @@ def main():
         # Fixed approved one-shot child, separate from research and the GET-only UI.
         # Its normal terminal exit must not restart or stop the web service.
         if INSPECT_EXISTING_AUDIT_ONLY:
-            diagnostic_audit.start()
+            get_diagnostic.start()
+            if get_diagnostic.reaped:
+                diagnostic_audit.start();audit_started=True
         else:
             experiment=subprocess.Popen([sys.executable,'paper_renewal_worker.py'])
             native_probe.start()
@@ -102,6 +106,9 @@ def main():
                     and readonly_runtime.active_stage is None):
                 schema_diagnostic.start()
             schema_diagnostic.poll()
+            get_diagnostic.poll()
+            if INSPECT_EXISTING_AUDIT_ONLY and not audit_started and get_diagnostic.reaped:
+                diagnostic_audit.start();audit_started=True
             diagnostic_audit.poll()
             if any(child.poll() is not None for child in children):return 1
             if experiment is not None and not experiment_observed:
@@ -118,6 +125,7 @@ def main():
         native_probe.close()
         readonly_runtime.close()
         schema_diagnostic.close()
+        get_diagnostic.close()
         diagnostic_audit.close()
         if experiment is not None:children.append(experiment)
         for child in children:

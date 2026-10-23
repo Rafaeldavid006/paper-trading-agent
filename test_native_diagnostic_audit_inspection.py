@@ -164,7 +164,8 @@ class AuditSupervisorTests(unittest.TestCase):
               patch.object(serve, 'NativeProbeSupervisor') as probe,
               patch.object(serve, 'ReadonlyRuntimeSupervisor') as runtime,
               patch.object(serve, 'SchemaDiagnosticSupervisor') as diagnostic,
-              patch.object(serve, 'DiagnosticAuditSupervisor') as audit):
+              patch.object(serve, 'DiagnosticAuditSupervisor') as audit, \
+              patch.object(serve, 'run_startup_gate', return_value=True)):
             self.assertEqual(serve.main(), 0)
             self.assertEqual(spawn.call_count, 1)
             self.assertEqual(spawn.call_args.args[0][1:3], ['-m', 'gunicorn'])

@@ -190,7 +190,7 @@ class PreflightSupervisorTests(unittest.TestCase):
 
 
 class PreflightStartupTests(unittest.TestCase):
-    def test_real_inspection_startup_selects_only_web_and_fixed_readonly_wrapper(self):
+    def test_postmigration_inspection_startup_selects_only_web_and_existing_audit(self):
         import serve
         import native_observation_supervisor
         commands=[]
@@ -207,12 +207,13 @@ class PreflightStartupTests(unittest.TestCase):
              patch.object(native_observation_supervisor.threading,'Timer',return_value=Mock()), \
              patch.object(serve,'NativeProbeSupervisor') as probe, \
              patch.object(serve,'ReadonlyRuntimeSupervisor') as runtime, \
-             patch.object(serve,'SchemaDiagnosticSupervisor') as diagnostic:
+             patch.object(serve,'SchemaDiagnosticSupervisor') as diagnostic, \
+             patch.object(serve,'run_startup_gate',return_value=True):
             self.assertEqual(serve.main(),0)
         self.assertEqual(len(commands),2)
         self.assertEqual(commands[0][0][-1],'inspection_wsgi:app')
-        self.assertEqual(Path(commands[1][0][1]).name,'native_restart_preflight.py')
-        self.assertEqual(commands[1][0][2:],[ '--inspect-restart-preflight'])
+        self.assertEqual(Path(commands[1][0][1]).name,'native_diagnostic_audit_inspection.py')
+        self.assertEqual(commands[1][0][2:],[ '--inspect-existing-audit'])
         self.assertFalse(commands[1][1]['shell'])
         for worker in (probe,runtime,diagnostic):
             worker.assert_called_once_with(enabled=False);worker.return_value.start.assert_not_called()
