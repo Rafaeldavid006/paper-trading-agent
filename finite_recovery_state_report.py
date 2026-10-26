@@ -50,6 +50,15 @@ def _stamp(paths):
 
 
 def current_anchor_digest(db):
+    return _anchor_digest(db)
+
+
+def session_legacy_anchor_digest(db):
+    """Recompute original full anchor, excluding exactly the reviewed v1 append area."""
+    return _anchor_digest(db,project_session_legacy=True)
+
+
+def _anchor_digest(db, *, project_session_legacy=False):
     """Versioned logical snapshot of every schema object and table row.
 
     Caller owns a pinned read transaction and verifies file stamps. No writes,
@@ -58,6 +67,20 @@ def current_anchor_digest(db):
     Explicit value tags preserve SQLite NULL/integer/real/text/blob distinctions.
     """
     objects=_bounded(db,"SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name",limit=256)
+    if project_session_legacy:
+        from finite_pilot_anchor import _schema
+        from finite_pilot_session_schema import SCHEMA as SESSION_SCHEMA,SESSIONS,EVENTS
+        _schema(db)
+        expected={('table',name,name,sql) for name,sql in SESSION_SCHEMA.items()}
+        expected.update({('index','sqlite_autoindex_'+SESSIONS+'_1',SESSIONS,None),
+            ('index','sqlite_autoindex_'+SESSIONS+'_2',SESSIONS,None),
+            ('index','sqlite_autoindex_'+EVENTS+'_1',EVENTS,None)})
+        attached={tuple(row) for row in objects if row[2] in SESSION_SCHEMA}
+        _require(attached==expected)
+        # Exact fixed schema exclusion only. No arbitrary table list or caller
+        # predicate; rowids and every ORIGINAL object/row remain in the hash.
+        objects=[row for row in objects if tuple(row) not in expected]
+
     _require(all(r[0] in ('table','index') and type(r[1]) is str
                  and (r[3] is None or type(r[3]) is str) for r in objects))
     _require(all(r[3] is not None and not r[3].lstrip().upper().startswith('CREATE VIRTUAL')
@@ -184,13 +207,39 @@ def _admission_report(db,runner):
     return base
 
 
+def _session_report(db,runner):
+    from finite_pilot_session_schema import SESSIONS,EVENTS
+    from finite_pilot_sessions import archived_manifest,_load
+    if not db.execute('SELECT 1 FROM sqlite_master WHERE name=?',(SESSIONS,)).fetchone():
+        return dict(reusable_session_state='absent',reusable_session_count=0,runner_matches_session_prepared_old=None,runner_matches_session_prepared_new=None)
+    records=_bounded(db,'SELECT document FROM '+SESSIONS,limit=16)
+    refs=[archived_manifest(row[0]) for row in records]
+    refs=[m for m in refs if m.session_admission is not None]
+    _require(bool(refs))
+    # Archived typed references are evidence only, never installed as approval.
+    latest=max(refs,key=lambda m:m.starts_ns)
+    docs,rows,counts,events=_load(db,latest)
+    row=rows[latest.pilot_id]
+    state=('closed_clean' if row['clean'] else 'closed_unknown') if row['closed'] else (
+        'halted' if row['halted'] else 'applied' if row['applied'] else 'prepared')
+    return dict(reusable_session_state=state,reusable_session_count=len(refs),
+        reusable_session_manifest_digest=contract.digest(latest.document()),
+        reusable_session_authority_counts=counts,reusable_session_dirty=bool(row['dirty']),
+        runner_matches_session_prepared_old=contract.digest(runner)==contract.digest(row['prepared']['old']) if row['prepared'] else None,
+        runner_matches_session_prepared_new=contract.digest(runner)==contract.digest(row['prepared']['new']) if row['prepared'] else None,
+        reusable_session_terminal_digest=row['terminal_digest'],reusable_session_history_structurally_validated=True)
+
+
 def report(*,paths=None,test_only=False,expected=None):
     _require(contract.APPROVED_RECOVERY is None and contract.APPROVED_INSPECTION is None)
     if contract.APPROVED_PILOT is not None:
         # Sole extra read-only context: exact exclusive typed admission pilot.
         # This neither installs a grant nor authorizes any provider/CAS action.
-        from finite_pilot_admission import require_admission
-        require_admission(contract.APPROVED_PILOT)
+        if contract.APPROVED_PILOT.session_admission is not None:
+            contract.require_pilot_manifest(contract.APPROVED_PILOT)
+        else:
+            from finite_pilot_admission import require_admission
+            require_admission(contract.APPROVED_PILOT)
     _require(type(test_only) is bool and (test_only or (paths is None and expected is None)))
     expected=expected or dict(seal=EXPECTED_SEAL,runner=EXPECTED_RUNNER,
                              protected=EXPECTED_PROTECTED,cohort=EXPECTED_COHORT)
@@ -264,6 +313,7 @@ def report(*,paths=None,test_only=False,expected=None):
                     activation_authorized=False,applied_receipt_structurally_validated=receipt_validated)
                 result.update(_successor_report(db,runner,enrolled))
                 result.update(_admission_report(db,runner))
+                result.update(_session_report(db,runner))
                 bundle.verify();journal._binding_row(db)
                 _require(_stamp(bundle.paths)==before)
             _require(0<=time.monotonic()-started<MAX_SECONDS)

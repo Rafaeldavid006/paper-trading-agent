@@ -49,7 +49,7 @@ class FinitePilotSupervisor:
     instance, with no automatic retry or in-process reset.
     ``close()`` cancels timers, kills any pending child, and bounds the reap wait.
 
-    Cadence is measured between starts, never accelerated to replay missed
+    Cadence is measured from successful reap, never accelerated to replay missed
     ticks. When both stages are due the oldest due time wins (source wins ties),
     so a long source stage cannot starve broker observations.
     """
@@ -254,6 +254,14 @@ class FinitePilotSupervisor:
             self._pending_initial = None
             self._initialized = True
             self._next_due = {'source': now, 'tick': now}
+        elif stage in _INTERVALS:
+            try:
+                # Worker anchor time follows process launch/import. Measuring
+                # from successful reap conservatively covers variable startup
+                # delay without weakening the durable wall-clock cadence gate.
+                self._next_due[stage] = self._now_locked() + _INTERVALS[stage]
+            except Exception:
+                self._halt_locked('clock_failed'); self._clear_child_locked(); return
         self._queue_locked('stage_finished', stage)
         self._clear_child_locked()
 
@@ -269,12 +277,13 @@ class FinitePilotSupervisor:
             return
         approval = self._approval_for(stage)
         remaining_scope = (approval.expires_ns - wall) / 1_000_000_000
-        if (stage == 'initialize' and approval.admission is not None
-                and wall < approval.admission.expires_ns):
+        admission = (approval.session_admission or approval.admission) if stage=='initialize' else None
+        if (stage == 'initialize' and admission is not None
+                and wall < admission.expires_ns):
             # A fresh admission child cannot outlive its first-five-minute
             # subwindow. After that boundary initialize may only verify an
             # already-APPLIED receipt; the worker forbids any new admission.
-            remaining_scope = min(remaining_scope,(approval.admission.expires_ns-wall)/1_000_000_000)
+            remaining_scope = min(remaining_scope,(admission.expires_ns-wall)/1_000_000_000)
         seconds = _DEADLINES[stage] if stage == 'recover' else min(_DEADLINES[stage], remaining_scope)
         if seconds <= 0:
             self._halt_locked('scope_expired'); return
@@ -284,8 +293,6 @@ class FinitePilotSupervisor:
         self._deadline_reason = ('scope_expired' if stage != 'recover'
                                  and remaining_scope <= _DEADLINES[stage] else 'watchdog_expired')
         self._deadline = now + seconds
-        if stage in _INTERVALS:
-            self._next_due[stage] = now + _INTERVALS[stage]
         try:
             filename = 'finite_pilot_inspection.py' if stage == 'inspect' else 'finite_pilot_worker.py'
             flag = '--initialize-proof-state' if stage == 'inspect' else '--' + stage

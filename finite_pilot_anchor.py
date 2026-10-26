@@ -62,7 +62,8 @@ def _schema(db, *, absent=False):
                     "WHERE name NOT LIKE 'sqlite_%' ORDER BY name")
     from finite_recovery_successor_contract import TABLE, SQL
     from finite_pilot_admission_schema import TABLE as ADMISSION_TABLE, SQL as ADMISSION_SQL
-    ours = [r for r in rows if r[1].startswith(PREFIX) or r[2] in SCHEMA or r[2] in (TABLE,ADMISSION_TABLE)]
+    from finite_pilot_session_schema import SCHEMA as SESSION_SCHEMA
+    ours = [r for r in rows if r[1].startswith(PREFIX) or r[2] in SCHEMA or r[2] in (TABLE,ADMISSION_TABLE) or r[2] in SESSION_SCHEMA]
     if not ours and absent:
         return False
     expected = dict(SCHEMA)
@@ -70,6 +71,10 @@ def _schema(db, *, absent=False):
         expected[TABLE] = SQL
     if any(r[1] == ADMISSION_TABLE for r in ours):
         expected[ADMISSION_TABLE] = ADMISSION_SQL
+    from finite_pilot_session_schema import SCHEMA as SESSION_SCHEMA
+    present={r[1] for r in ours} & set(SESSION_SCHEMA)
+    require(not present or present==set(SESSION_SCHEMA),'session_schema_incomplete')
+    if present:expected.update(SESSION_SCHEMA)
     require(ours == [('table', name, name, sql) for name, sql in sorted(expected.items())],
             'anchor_journal_schema_invalid')
     require(db.execute('PRAGMA quick_check(1)').fetchall() == [('ok',)], 'anchor_journal_corrupt')
@@ -265,6 +270,10 @@ class AnchorJournal:
 
     def _binding_row(self, db, manifest=None):
         _schema(db)
+        if manifest is not None and type(manifest) is contract.PilotManifest:
+            from finite_pilot_session_schema import SESSIONS
+            present=db.execute('SELECT 1 FROM sqlite_master WHERE name=?',(SESSIONS,)).fetchone()
+            require(not present or manifest.session_admission is not None,'legacy_pilot_fenced')
         rows = _bounded(db, 'SELECT * FROM finite_pilot_binding', limit=1)
         require(len(rows) == 1 and rows[0][:7] == self._binding(), 'anchor_binding_changed')
         require(contract._hash(rows[0][7]) and contract._hash(rows[0][8]), 'anchor_founding_binding_invalid')

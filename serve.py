@@ -141,6 +141,51 @@ def _run_readonly_report(stop):
     return reaped
 
 
+def _run_session_receipt(stop, action):
+    """One local write-only receipt child after finite reap; no account IO/retry."""
+    if action not in ('halt','close'):raise ValueError('invalid_session_receipt')
+    child = None
+    reaped = False
+    reason = 'report_start_failed'
+    try:
+        if stop.is_set():
+            return True
+        child = subprocess.Popen([sys.executable, str(Path(__file__).resolve().with_name(
+            'finite_pilot_session_terminal.py')), '--'+action],
+            stdin=subprocess.DEVNULL, stdout=None, stderr=subprocess.DEVNULL,
+            shell=False, close_fds=True)
+        deadline = time.monotonic() + 10
+        while True:
+            code = child.poll()
+            if code is not None:
+                reaped = True
+                reason = 'report_finished' if type(code) is int and code == 0 else 'report_refused'
+                break
+            if stop.wait(.1):
+                reason = 'report_cancelled'
+                break
+            if time.monotonic() >= deadline:
+                reason = 'report_timeout'
+                break
+    except Exception:
+        reason = 'report_process_uncertain'
+    finally:
+        if child is not None and not reaped:
+            try:
+                child.kill()
+            except Exception:
+                pass
+            try:
+                child.wait(timeout=1)
+                reaped = True
+            except Exception:
+                reaped = False
+        print(json.dumps(dict(mode='finite_session_receipt_supervisor', action=action, reason=reason,
+            child_reaped=reaped, automatic_retry=False, provider_requests=0,
+            order_permission='none')), flush=True)
+    return reaped
+
+
 def main():
     try:
         _, port = validate_environment(os.environ)
@@ -151,7 +196,10 @@ def main():
             successor_contract.require_successor_manifest(successor_contract.APPROVED_SUCCESSOR)
         finite_requested = _finite_requested()
         admission_requested = (type(finite_contract.APPROVED_PILOT) is finite_contract.PilotManifest
-                               and finite_contract.APPROVED_PILOT.admission is not None)
+                               and (finite_contract.APPROVED_PILOT.admission is not None
+                                    or finite_contract.APPROVED_PILOT.session_admission is not None))
+        session_requested = (type(finite_contract.APPROVED_PILOT) is finite_contract.PilotManifest
+                             and finite_contract.APPROVED_PILOT.session_admission is not None)
         if successor_requested and finite_requested:
             raise ValueError('mixed_successor_scope')
     except (ValueError, TypeError):
@@ -188,6 +236,7 @@ def main():
         # Likewise never repeat the consumed Oct23 GET diagnostic or old loops.
         if runtime_requested and not stop.is_set():
             finite_runtime.start()
+        session_close_pending = False
         while not stop.wait(.5):
             if runtime_requested and not finite_terminal:
                 finite_runtime.poll()
@@ -197,11 +246,18 @@ def main():
                     _finite_terminal(finite_runtime)
                     if not finite_runtime.reaped:
                         return 1
+                    if session_requested and not stop.is_set():
+                        if not _run_session_receipt(stop,'halt'):return 1
+                        session_close_pending = True
                     if (successor_requested or admission_requested) and finite_runtime.reaped and not stop.is_set():
                         # Exactly one post-terminal read-only receipt check, not a
                         # recovery restart. A report failure never retries.
                         if not _run_readonly_report(stop):
                             return 1
+            if session_close_pending and time.time_ns()>=finite_contract.APPROVED_PILOT.expires_ns:
+                session_close_pending=False  # one bounded attempt, even if refused
+                if not _run_session_receipt(stop,'close'):return 1
+                if REPORT_RECOVERY_STATE and not _run_readonly_report(stop):return 1
             if any(child.poll() is not None for child in children):
                 return 1
         return 0

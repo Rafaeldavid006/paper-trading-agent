@@ -72,6 +72,53 @@ ERROR_CODES = frozenset((
     'prepared_request_mismatch', 'runner_write_control_refused',
     'pipeline_write_control_refused', 'committed_native_uncertainty_required',
     'production_overrides_forbidden', 'invalid_test_mode',
+    'session_admission',
+    'session_applied_invalid',
+    'session_attempt_consumed',
+    'session_authority_budget_exhausted',
+    'session_authority_changed',
+    'session_budget_corrupt',
+    'session_clean_runner_required',
+    'session_clock_regression',
+    'session_close_before_expiry',
+    'session_close_invalid',
+    'session_close_window_invalid',
+    'session_event_after_close',
+    'session_event_invalid',
+    'session_event_kind_invalid',
+    'session_event_window_invalid',
+    'session_exclusive_required',
+    'session_global_clock_regression',
+    'session_global_sequence_invalid',
+    'session_halt_invalid',
+    'session_legacy_admission_invalid',
+    'session_legacy_cadence_invalid',
+    'session_legacy_changed',
+    'session_legacy_counters_invalid',
+    'session_legacy_schema_invalid',
+    'session_legacy_sources_invalid',
+    'session_manifest_changed',
+    'session_manifest_invalid',
+    'session_multiple_active',
+    'session_not_active',
+    'session_not_enrolled',
+    'session_order_history_present',
+    'session_predecessor_not_closed',
+    'session_predecessor_state_changed',
+    'session_predecessor_unclean',
+    'session_predecessor_window_active',
+    'session_prepared_invalid',
+    'session_root_binding_changed',
+    'session_root_changed',
+    'session_root_closure_invalid',
+    'session_root_control_invalid',
+    'session_root_enrollment_changed',
+    'session_root_invalid',
+    'session_root_missing',
+    'session_source_invalid',
+    'session_stage_invalid',
+    'session_terminal_action_invalid',
+    'session_write_invalid',
     'typed_admission_required','admission_successor_incomplete','admission_successor_changed',
     'admission_predecessor_changed','admission_clean_runner_required','admission_incomplete',
     'admission_receipt_invalid','admission_window_closed','admission_pilot_already_consumed',
@@ -137,6 +184,9 @@ def public(phase, reason, *, outcome=None, error_stage=None, error_code=None, **
 
 
 def _exhausted(row, manifest):
+    if manifest.session_admission is not None:
+        from finite_pilot_sessions import SessionJournal
+        return SessionJournal._exhausted(row,manifest)
     return (row['ticks'] >= manifest.max_ticks or row['writes'] >= manifest.max_write_attempts
             or row['sources'] >= manifest.max_source_requests)
 
@@ -314,6 +364,9 @@ def run_phase(phase, *, paths=None, test_only=False, environ=None, now_ns=None,
     bundle = resolve_approved_bundle(manifest, paths=paths, test_only=test_only)
     bundle.verify()
     journal = AnchorJournal(bundle, clock)
+    if phase!='recover' and manifest.session_admission is not None:
+        from finite_pilot_sessions import SessionJournal
+        journal=SessionJournal(bundle,clock)
     if phase == 'recover':
         # Recovery owns its own exclusive seal/account transaction. Ordinary
         # startup/initialize/source/tick never invoke it implicitly.
@@ -324,6 +377,14 @@ def run_phase(phase, *, paths=None, test_only=False, environ=None, now_ns=None,
         result = journal.recover_incident(manifest, guard=guard, validate=validate_recovery_evidence)
         return public('recover', 'incident_recovery_previously_applied'
                       if result['phase'] == 'already_recovered_readonly' else 'incident_recovered')
+    if phase == 'initialize' and manifest.session_admission is not None:
+        from finite_pilot_session_admission import SessionAdmissionJournal,validate_admission_evidence
+        guard=SharedAccountGuard(bundle.paths['legacy'],bundle.paths['lifecycle'],bundle.binding,
+            enabled=True,state_database=bundle.paths['guard'],test_only=test_only,runtime_bundle=bundle)
+        admission=SessionAdmissionJournal(bundle,clock)
+        admission.admit(manifest,guard=guard,validate=validate_admission_evidence)
+        admission.startup_gate(manifest)
+        return public('initialize','pilot_enrolled')
     if phase == 'initialize' and manifest.admission is not None:
         from finite_pilot_admission import AdmissionJournal,validate_admission_evidence
         guard = SharedAccountGuard(bundle.paths['legacy'],bundle.paths['lifecycle'],bundle.binding,
