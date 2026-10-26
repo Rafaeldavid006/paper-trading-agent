@@ -150,6 +150,8 @@ def main():
         if successor_requested:
             successor_contract.require_successor_manifest(successor_contract.APPROVED_SUCCESSOR)
         finite_requested = _finite_requested()
+        admission_requested = (type(finite_contract.APPROVED_PILOT) is finite_contract.PilotManifest
+                               and finite_contract.APPROVED_PILOT.admission is not None)
         if successor_requested and finite_requested:
             raise ValueError('mixed_successor_scope')
     except (ValueError, TypeError):
@@ -171,7 +173,7 @@ def main():
             return 0 if stop.is_set() else 1
         if stop.is_set():
             return 0
-        if REPORT_RECOVERY_STATE and not successor_requested:
+        if REPORT_RECOVERY_STATE and not successor_requested and not admission_requested:
             if finite_requested or not _run_readonly_report(stop):
                 return 1
             if stop.is_set():
@@ -193,7 +195,9 @@ def main():
                     finite_terminal = True
                     finite_runtime.close()  # Bounded reap; never schedule again.
                     _finite_terminal(finite_runtime)
-                    if successor_requested and finite_runtime.reaped and not stop.is_set():
+                    if not finite_runtime.reaped:
+                        return 1
+                    if (successor_requested or admission_requested) and finite_runtime.reaped and not stop.is_set():
                         # Exactly one post-terminal read-only receipt check, not a
                         # recovery restart. A report failure never retries.
                         if not _run_readonly_report(stop):

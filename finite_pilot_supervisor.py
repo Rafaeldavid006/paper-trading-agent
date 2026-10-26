@@ -269,6 +269,12 @@ class FinitePilotSupervisor:
             return
         approval = self._approval_for(stage)
         remaining_scope = (approval.expires_ns - wall) / 1_000_000_000
+        if (stage == 'initialize' and approval.admission is not None
+                and wall < approval.admission.expires_ns):
+            # A fresh admission child cannot outlive its first-five-minute
+            # subwindow. After that boundary initialize may only verify an
+            # already-APPLIED receipt; the worker forbids any new admission.
+            remaining_scope = min(remaining_scope,(approval.admission.expires_ns-wall)/1_000_000_000)
         seconds = _DEADLINES[stage] if stage == 'recover' else min(_DEADLINES[stage], remaining_scope)
         if seconds <= 0:
             self._halt_locked('scope_expired'); return

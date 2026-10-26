@@ -72,6 +72,14 @@ ERROR_CODES = frozenset((
     'prepared_request_mismatch', 'runner_write_control_refused',
     'pipeline_write_control_refused', 'committed_native_uncertainty_required',
     'production_overrides_forbidden', 'invalid_test_mode',
+    'typed_admission_required','admission_successor_incomplete','admission_successor_changed',
+    'admission_predecessor_changed','admission_clean_runner_required','admission_incomplete',
+    'admission_receipt_invalid','admission_window_closed','admission_pilot_already_consumed',
+    'admission_attempt_consumed','admission_anchor_changed','reviewed_admission_validator_required',
+    'admission_runner_changed','admission_cohort_changed','admission_protected_changed',
+    'admission_poststate_changed','admission_clock_regression','admission_evidence_invalid',
+    'admission_application_changed','admission_receipt_changed','admission_compare_and_set_failed',
+    'admission_exclusive_pilot_required',
 ))
 
 
@@ -316,6 +324,14 @@ def run_phase(phase, *, paths=None, test_only=False, environ=None, now_ns=None,
         result = journal.recover_incident(manifest, guard=guard, validate=validate_recovery_evidence)
         return public('recover', 'incident_recovery_previously_applied'
                       if result['phase'] == 'already_recovered_readonly' else 'incident_recovered')
+    if phase == 'initialize' and manifest.admission is not None:
+        from finite_pilot_admission import AdmissionJournal,validate_admission_evidence
+        guard = SharedAccountGuard(bundle.paths['legacy'],bundle.paths['lifecycle'],bundle.binding,
+            enabled=True,state_database=bundle.paths['guard'],test_only=test_only,runtime_bundle=bundle)
+        admission = AdmissionJournal(bundle,clock)
+        admission.admit(manifest,guard=guard,validate=validate_admission_evidence)
+        admission.startup_gate(manifest)
+        return public('initialize','pilot_enrolled')
     with serialized(bundle):
         if phase == 'initialize':
             # Enroll only an existing immutable cohort. Never create/re-create a

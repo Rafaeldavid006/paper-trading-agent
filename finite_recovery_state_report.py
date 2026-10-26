@@ -144,9 +144,53 @@ def _successor_report(db,runner,enrolled):
     return base
 
 
+def _admission_report(db,runner):
+    """Read typed archived admission receipt; never installs a compiled grant."""
+    from finite_pilot_admission import successor_rows,_clean_runner
+    from finite_pilot_admission_schema import TABLE
+    present=db.execute('SELECT 1 FROM sqlite_master WHERE name=?',(TABLE,)).fetchone()
+    base=dict(pilot_admission_state='absent',pilot_admission_journal_count=0,
+        pilot_admission_manifest_digest=None,pilot_admission_applied_structurally_validated=False,
+        runner_matches_admission_prepared_old=None,runner_matches_admission_prepared_new=None)
+    if not present:return base
+    enrolled=_bounded(db,'SELECT * FROM finite_pilot_enrollment',limit=1)
+    rows=_bounded(db,'SELECT * FROM '+TABLE+' ORDER BY seq',limit=2)
+    _require(len(enrolled)==1 and len(rows) in (1,2))
+    raw=json.loads(enrolled[0][2]);doc=dict(raw)
+    _require(type(doc.get('admission')) is dict and type(doc.get('symbols')) is list)
+    doc['admission']=contract.PilotAdmission(**doc['admission'])
+    doc['symbols']=tuple(doc['symbols'])
+    reference=contract.PilotManifest(**doc)
+    _require(contract.digest(reference.document())==enrolled[0][1])
+    linked=successor_rows(db,reference)
+    first=rows[0]
+    _require(first[:2]==(1,'prepared') and first[3]==enrolled[0][1]
+             and first[4]==contract.digest(linked) and first[9] is None)
+    old=_clean_runner(json.loads(first[5]));new=json.loads(first[6])
+    _require(contract.digest(old)==reference.admission.current_runner_sha256
+             and old==tuple(json.loads(linked[1][7]))
+             and new==[old[0],first[2]/contract.NS,*old[2:]] and new[1]>=old[1])
+    for index,row in enumerate(rows):
+        _require(row[0]==index+1 and row[1]==('prepared' if index==0 else 'applied')
+            and type(row[2]) is int and reference.starts_ns<=first[2]<=row[2]<reference.admission.expires_ns
+            and row[3:8]==first[3:8] and row[7]==reference.admission.protected_state_sha256
+            and contract._hash(row[8]))
+    if len(rows)==2:_require(contract._hash(rows[1][9]))
+    base.update(pilot_admission_state='applied' if len(rows)==2 else 'prepared',
+        pilot_admission_journal_count=len(rows),pilot_admission_manifest_digest=enrolled[0][1],
+        pilot_admission_applied_structurally_validated=len(rows)==2,
+        runner_matches_admission_prepared_old=contract.digest(runner)==contract.digest(old),
+        runner_matches_admission_prepared_new=contract.digest(runner)==contract.digest(new))
+    return base
+
+
 def report(*,paths=None,test_only=False,expected=None):
-    _require(contract.APPROVED_PILOT is None and contract.APPROVED_RECOVERY is None
-             and contract.APPROVED_INSPECTION is None)
+    _require(contract.APPROVED_RECOVERY is None and contract.APPROVED_INSPECTION is None)
+    if contract.APPROVED_PILOT is not None:
+        # Sole extra read-only context: exact exclusive typed admission pilot.
+        # This neither installs a grant nor authorizes any provider/CAS action.
+        from finite_pilot_admission import require_admission
+        require_admission(contract.APPROVED_PILOT)
     _require(type(test_only) is bool and (test_only or (paths is None and expected is None)))
     expected=expected or dict(seal=EXPECTED_SEAL,runner=EXPECTED_RUNNER,
                              protected=EXPECTED_PROTECTED,cohort=EXPECTED_COHORT)
@@ -219,10 +263,11 @@ def report(*,paths=None,test_only=False,expected=None):
                     broker_state_verified=False,provider_requests=0,state_writes=0,order_permission='none',
                     activation_authorized=False,applied_receipt_structurally_validated=receipt_validated)
                 result.update(_successor_report(db,runner,enrolled))
+                result.update(_admission_report(db,runner))
                 bundle.verify();journal._binding_row(db)
                 _require(_stamp(bundle.paths)==before)
             _require(0<=time.monotonic()-started<MAX_SECONDS)
-    _require(len(json.dumps(result))<4096)
+    _require(len(json.dumps(result))<6144)
     return result
 
 

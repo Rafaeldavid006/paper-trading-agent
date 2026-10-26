@@ -61,12 +61,15 @@ def _schema(db, *, absent=False):
     rows = _bounded(db, "SELECT type,name,tbl_name,sql FROM sqlite_master "
                     "WHERE name NOT LIKE 'sqlite_%' ORDER BY name")
     from finite_recovery_successor_contract import TABLE, SQL
-    ours = [r for r in rows if r[1].startswith(PREFIX) or r[2] in SCHEMA or r[2] == TABLE]
+    from finite_pilot_admission_schema import TABLE as ADMISSION_TABLE, SQL as ADMISSION_SQL
+    ours = [r for r in rows if r[1].startswith(PREFIX) or r[2] in SCHEMA or r[2] in (TABLE,ADMISSION_TABLE)]
     if not ours and absent:
         return False
     expected = dict(SCHEMA)
     if any(r[1] == TABLE for r in ours):
         expected[TABLE] = SQL
+    if any(r[1] == ADMISSION_TABLE for r in ours):
+        expected[ADMISSION_TABLE] = ADMISSION_SQL
     require(ours == [('table', name, name, sql) for name, sql in sorted(expected.items())],
             'anchor_journal_schema_invalid')
     require(db.execute('PRAGMA quick_check(1)').fetchall() == [('ok',)], 'anchor_journal_corrupt')
@@ -89,6 +92,11 @@ def _eligible_runner(row):
 
 
 def _recovery_gate(db):
+    pilot=contract.APPROVED_PILOT
+    if type(pilot) is contract.PilotManifest and pilot.admission is not None:
+        from finite_pilot_admission import admission_gate
+        admission_gate(db,pilot)
+        return
     rows = _bounded(db, 'SELECT * FROM finite_pilot_recovery', limit=1)
     records = _bounded(db, 'SELECT * FROM finite_pilot_recovery_journal ORDER BY seq', limit=2)
     if not rows:
