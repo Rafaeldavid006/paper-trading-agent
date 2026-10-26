@@ -368,4 +368,7 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    # Script entry must call the canonical imported implementation: the anchor
+    # deliberately validates the exact canonical recovery callback identity.
+    import finite_pilot_worker as _canonical_worker
+    raise SystemExit(_canonical_worker.main())

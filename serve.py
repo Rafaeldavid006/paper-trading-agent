@@ -26,6 +26,7 @@ import finite_pilot_contract as finite_contract
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
 INSPECT_EXISTING_AUDIT_ONLY = True
+REPORT_RECOVERY_STATE = True  # Compiled read-only diagnostic; no trading authority.
 
 
 def validate_environment(env):
@@ -94,6 +95,50 @@ def _finite_terminal(runtime):
         inspection_health_only=reaped, finite_child_reaped=reaped)), flush=True)
 
 
+def _run_readonly_report(stop):
+    """One owned read-only child; bounded deadline/reap, no retry on any outcome."""
+    child = None
+    reaped = False
+    reason = 'report_start_failed'
+    try:
+        if stop.is_set():
+            return True
+        child = subprocess.Popen([sys.executable, str(Path(__file__).resolve().with_name(
+            'finite_recovery_state_report.py')), '--read-existing-state'],
+            stdin=subprocess.DEVNULL, stdout=None, stderr=subprocess.DEVNULL,
+            shell=False, close_fds=True)
+        deadline = time.monotonic() + 10
+        while True:
+            code = child.poll()
+            if code is not None:
+                reaped = True
+                reason = 'report_finished' if type(code) is int and code == 0 else 'report_refused'
+                break
+            if stop.wait(.1):
+                reason = 'report_cancelled'
+                break
+            if time.monotonic() >= deadline:
+                reason = 'report_timeout'
+                break
+    except Exception:
+        reason = 'report_process_uncertain'
+    finally:
+        if child is not None and not reaped:
+            try:
+                child.kill()
+            except Exception:
+                pass
+            try:
+                child.wait(timeout=1)
+                reaped = True
+            except Exception:
+                reaped = False
+        print(json.dumps(dict(mode='finite_recovery_report_supervisor', reason=reason,
+            child_reaped=reaped, automatic_retry=False, provider_requests=0,
+            order_permission='none')), flush=True)
+    return reaped
+
+
 def main():
     try:
         _, port = validate_environment(os.environ)
@@ -117,6 +162,11 @@ def main():
             return 0 if stop.is_set() else 1
         if stop.is_set():
             return 0
+        if REPORT_RECOVERY_STATE:
+            if finite_requested or not _run_readonly_report(stop):
+                return 1
+            if stop.is_set():
+                return 0
         children.append(subprocess.Popen([sys.executable, '-m', 'gunicorn',
             '--bind', '0.0.0.0:' + port, '--workers', '1', '--threads', '4',
             '--timeout', '120', 'inspection_wsgi:app'], stdin=subprocess.DEVNULL,
