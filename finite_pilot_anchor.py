@@ -60,10 +60,14 @@ def _bounded(db, sql, args=(), limit=20000):
 def _schema(db, *, absent=False):
     rows = _bounded(db, "SELECT type,name,tbl_name,sql FROM sqlite_master "
                     "WHERE name NOT LIKE 'sqlite_%' ORDER BY name")
-    ours = [r for r in rows if r[1].startswith(PREFIX) or r[2] in SCHEMA]
+    from finite_recovery_successor_contract import TABLE, SQL
+    ours = [r for r in rows if r[1].startswith(PREFIX) or r[2] in SCHEMA or r[2] == TABLE]
     if not ours and absent:
         return False
-    require(ours == [('table', name, name, sql) for name, sql in sorted(SCHEMA.items())],
+    expected = dict(SCHEMA)
+    if any(r[1] == TABLE for r in ours):
+        expected[TABLE] = SQL
+    require(ours == [('table', name, name, sql) for name, sql in sorted(expected.items())],
             'anchor_journal_schema_invalid')
     require(db.execute('PRAGMA quick_check(1)').fetchall() == [('ok',)], 'anchor_journal_corrupt')
     return True

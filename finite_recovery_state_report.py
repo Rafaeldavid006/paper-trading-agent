@@ -111,6 +111,39 @@ def current_anchor_digest(db):
     return h.hexdigest()
 
 
+def _successor_report(db,runner,enrolled):
+    """Read-only local receipt structure, never renewed authority or broker proof."""
+    import finite_recovery_successor_contract as successor
+    from finite_pilot_anchor import _eligible_runner
+    present=db.execute('SELECT 1 FROM sqlite_master WHERE name=?',(successor.TABLE,)).fetchone()
+    base=dict(successor_state='absent',successor_journal_count=0,
+        successor_manifest_digest=None,successor_applied_receipt_structurally_validated=False,
+        runner_matches_successor_prepared_old=None,runner_matches_successor_prepared_new=None)
+    if not present:return base
+    rows=_bounded(db,'SELECT * FROM '+successor.TABLE+' ORDER BY seq',limit=2)
+    _require(len(rows) in (1,2) and len(enrolled)==1)
+    first=rows[0]
+    _require(first[0:2]==(1,'prepared') and type(first[4]) is str and len(first[4])<=16384)
+    doc=json.loads(first[4]);reference=successor.SuccessorManifest(**doc)
+    _require(contract.digest(doc)==first[3] and first[5]==reference.predecessor_digest
+             and enrolled[0]==(1,reference.predecessor_digest,reference.predecessor_document))
+    old=json.loads(first[6]);new=json.loads(first[7])
+    _require(contract.digest(_eligible_runner(old))==reference.original_runner_sha256
+             and new==[1,first[2]/contract.NS,0,0,None,'recovered_readonly']
+             and new[1]>=old[1] and first[10] is None)
+    for index,row in enumerate(rows):
+        _require(row[0]==index+1 and row[1]==('prepared' if index==0 else 'applied')
+                 and type(row[2]) is int and reference.starts_ns<=first[2]<=row[2]<reference.expires_ns
+                 and row[3:9]==first[3:9] and row[8]==reference.protected_state_sha256
+                 and contract._hash(row[9]))
+    if len(rows)==2:_require(contract._hash(rows[1][10]))
+    base.update(successor_state='applied' if len(rows)==2 else 'prepared',successor_journal_count=len(rows),
+        successor_manifest_digest=first[3],successor_applied_receipt_structurally_validated=len(rows)==2,
+        runner_matches_successor_prepared_old=contract.digest(runner)==contract.digest(old),
+        runner_matches_successor_prepared_new=contract.digest(runner)==contract.digest(new))
+    return base
+
+
 def report(*,paths=None,test_only=False,expected=None):
     _require(contract.APPROVED_PILOT is None and contract.APPROVED_RECOVERY is None
              and contract.APPROVED_INSPECTION is None)
@@ -185,6 +218,7 @@ def report(*,paths=None,test_only=False,expected=None):
                     runner_original_incident=(tuple(runner[2:])==(1,0,'readonly_runtime_stage_failed','started')),
                     broker_state_verified=False,provider_requests=0,state_writes=0,order_permission='none',
                     activation_authorized=False,applied_receipt_structurally_validated=receipt_validated)
+                result.update(_successor_report(db,runner,enrolled))
                 bundle.verify();journal._binding_row(db)
                 _require(_stamp(bundle.paths)==before)
             _require(0<=time.monotonic()-started<MAX_SECONDS)

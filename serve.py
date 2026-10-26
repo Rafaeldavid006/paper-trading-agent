@@ -22,6 +22,8 @@ from native_postmigration_supervisors import GetDiagnosticSupervisor
 from native_postmigration_supervisors import verify_completed_storage as run_startup_gate
 from finite_pilot_supervisor import FinitePilotSupervisor
 import finite_pilot_contract as finite_contract
+import finite_recovery_successor_contract as successor_contract
+from finite_recovery_successor_supervisor import SuccessorSupervisor
 
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
@@ -144,14 +146,21 @@ def main():
         _, port = validate_environment(os.environ)
         if INSPECT_EXISTING_AUDIT_ONLY is not True:
             raise ValueError('inspection_service_required')
+        successor_requested = successor_contract.APPROVED_SUCCESSOR is not None
+        if successor_requested:
+            successor_contract.require_successor_manifest(successor_contract.APPROVED_SUCCESSOR)
         finite_requested = _finite_requested()
+        if successor_requested and finite_requested:
+            raise ValueError('mixed_successor_scope')
     except (ValueError, TypeError):
         print(json.dumps(dict(mode='finite_paper_startup', reason='startup_configuration_refused',
             order_permission='none', automatic_retry=False)), file=sys.stderr, flush=True)
         return 1
     stop = threading.Event()
     children = []
-    finite_runtime = FinitePilotSupervisor(enabled=finite_requested)
+    finite_runtime = (SuccessorSupervisor(enabled=True) if successor_requested
+                      else FinitePilotSupervisor(enabled=finite_requested))
+    runtime_requested = finite_requested or successor_requested
     finite_terminal = False
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
@@ -162,7 +171,7 @@ def main():
             return 0 if stop.is_set() else 1
         if stop.is_set():
             return 0
-        if REPORT_RECOVERY_STATE:
+        if REPORT_RECOVERY_STATE and not successor_requested:
             if finite_requested or not _run_readonly_report(stop):
                 return 1
             if stop.is_set():
@@ -175,15 +184,20 @@ def main():
         # append audit rows/change the runner, making its historical exact-state
         # assumptions inapplicable. Its validation and code pin remain intact.
         # Likewise never repeat the consumed Oct23 GET diagnostic or old loops.
-        if finite_requested and not stop.is_set():
+        if runtime_requested and not stop.is_set():
             finite_runtime.start()
         while not stop.wait(.5):
-            if finite_requested and not finite_terminal:
+            if runtime_requested and not finite_terminal:
                 finite_runtime.poll()
                 if finite_runtime.completed or finite_runtime.halted:
                     finite_terminal = True
                     finite_runtime.close()  # Bounded reap; never schedule again.
                     _finite_terminal(finite_runtime)
+                    if successor_requested and finite_runtime.reaped and not stop.is_set():
+                        # Exactly one post-terminal read-only receipt check, not a
+                        # recovery restart. A report failure never retries.
+                        if not _run_readonly_report(stop):
+                            return 1
             if any(child.poll() is not None for child in children):
                 return 1
         return 0
