@@ -253,42 +253,7 @@ class RecoveryEvidence:
 
 
 # LOCAL PROPOSED OVERLAY. NOT AUTHORIZED FOR PUBLICATION OR EXECUTION.
-APPROVED_PILOT = PilotManifest(
-    admission=None,
-    anchor_pre_enrollment_sha256='5f3cb268d21565caa6a62532fa4f4b70003b7f76d3e5af2578cfa9c43ba46b0b',
-    approval_artifact_sha256='ba032940a897361d3046ba2563295e8fd4747117d4daf52f31269c4ca847b080',
-    approval_reference='proposed-reusable-paper-session-20261026T181000Z',
-    bundle_generation='ec8ce6d2e16684e597b5756fe26a1e529adae2fb554fc5548b4ab38f3194e668',
-    bundle_seal_sha256='4baf35d188353e7cb4ddcfbc37f9cd2951dddf1bd15489fc3b997db062046ba6',
-    cadence_ns=65000000000,
-    expires_ns=1793039400000000000,
-    max_entry_claims=4,
-    max_loss_usd='100',
-    max_notional_usd='2000',
-    max_positions=2,
-    max_shares=1,
-    max_source_requests=117,
-    max_ticks=10,
-    max_write_attempts=8,
-    pilot_id='finite-paper-session-nvda-20261026T181000Z',
-    pre_enrollment_cohort_sha256='8646636181a876b57652140eedec8cbc2cff51f10cc973da9265eb4aee838753',
-    source_cadence_ns=20000000000,
-    starts_ns=1793038200000000000,
-    symbols=('NVDA',),
-    session_admission=SessionAdmission(
-        root_document='{"admission":{"current_anchor_sha256":"0bdf19b6a4b7aac6fa0a57649af150250264daefceae061cf311bc988f4ac8cb","current_cohort_sha256":"5d00d2d32e842fd43388fbb888c307563753b727b2bc7180b604cc8d2466cd64","current_runner_sha256":"85bcf056cb0f4d62af76ded5c2a6fc55683e8b82d36a5f3fe7227633d9bebba1","expires_ns":1793034900000000000,"protected_state_sha256":"64dd23845dc41ea82dc5eacb4e2e3d935a4170306bea7578bc50e6d1dba70282","successor_digest":"f2a9f148b3a32736a34208617524255232c10e443048dae4bdf2d6e976456b47","successor_document":"{\\"anchor_pre_enrollment_sha256\\":\\"5f3cb268d21565caa6a62532fa4f4b70003b7f76d3e5af2578cfa9c43ba46b0b\\",\\"approval_reference\\":\\"Sentinel_e82bb87119ac8191a0fb9d63f1be4a1a\\",\\"bundle_generation\\":\\"ec8ce6d2e16684e597b5756fe26a1e529adae2fb554fc5548b4ab38f3194e668\\",\\"bundle_seal_sha256\\":\\"4baf35d188353e7cb4ddcfbc37f9cd2951dddf1bd15489fc3b997db062046ba6\\",\\"current_anchor_sha256\\":\\"ba3e72ce37ff7dcb08ed6c4c3770e946687dfad22a0608893b68f268372623bd\\",\\"diagnostic_artifact_sha256\\":\\"bd1ccf86179aeb6e6fb24cc2777d8075688dab0a61b52a87e5156eff61e6920b\\",\\"diagnostic_result_sha256\\":\\"dc13d9f33b3ff33e65806a9bf4249d6c6c5db72abf3ea2d8b44e0aa865d43ba9\\",\\"expires_ns\\":1793028300000000000,\\"historical_cause_unproven\\":true,\\"incident_id\\":\\"native_schema_refused:2026-10-20T13:30:37Z\\",\\"original_runner_sha256\\":\\"745d53479c6b1016463b516f0599bc16676451385a66696f886e7eb17de2c33f\\",\\"pre_enrollment_cohort_sha256\\":\\"8646636181a876b57652140eedec8cbc2cff51f10cc973da9265eb4aee838753\\",\\"predecessor_digest\\":\\"02f3bf75c43620512b56e4eaa2b7e3ff46a3dd9e1ffa4de42b11cd0162f42433\\",\\"predecessor_document\\":\\"{\\\\\\"anchor_pre_enrollment_sha256\\\\\\":\\\\\\"5f3cb268d21565caa6a62532fa4f4b70003b7f76d3e5af2578cfa9c43ba46b0b\\\\\\",\\\\\\"approval_reference\\\\\\":\\\\\\"paper-recovery-pilot-20261026T133600Z-135600Z\\\\\\",\\\\\\"bundle_generation\\\\\\":\\\\\\"ec8ce6d2e16684e597b5756fe26a1e529adae2fb554fc5548b4ab38f3194e668\\\\\\",\\\\\\"bundle_seal_sha256\\\\\\":\\\\\\"4baf35d188353e7cb4ddcfbc37f9cd2951dddf1bd15489fc3b997db062046ba6\\\\\\",\\\\\\"diagnostic_artifact_sha256\\\\\\":\\\\\\"bc144b008e1253ede852167cecb15ab0d154c41d133906a934117522c95df2d8\\\\\\",\\\\\\"diagnostic_result_sha256\\\\\\":\\\\\\"9a82ac11335f74bf9796c3b43301f19e56f4b2b1ee66903aa9cd69b00f522ed2\\\\\\",\\\\\\"expires_ns\\\\\\":1793022060000000000,\\\\\\"historical_cause_unproven\\\\\\":true,\\\\\\"incident_id\\\\\\":\\\\\\"native_schema_refused:2026-10-20T13:30:37Z\\\\\\",\\\\\\"original_runner_sha256\\\\\\":\\\\\\"745d53479c6b1016463b516f0599bc16676451385a66696f886e7eb17de2c33f\\\\\\",\\\\\\"pre_enrollment_cohort_sha256\\\\\\":\\\\\\"8646636181a876b57652140eedec8cbc2cff51f10cc973da9265eb4aee838753\\\\\\",\\\\\\"protected_state_sha256\\\\\\":\\\\\\"64dd23845dc41ea82dc5eacb4e2e3d935a4170306bea7578bc50e6d1dba70282\\\\\\",\\\\\\"recovery_basis\\\\\\":\\\\\\"operator_approved_fresh_baseline_adoption\\\\\\",\\\\\\"review_authorization_sha256\\\\\\":\\\\\\"abae85848dcf7a428999a72053e4711b70367e5e864b8a9adfbef5a3ab5cfd92\\\\\\",\\\\\\"reviewed_fix_sha256\\\\\\":\\\\\\"5da292a1f9342d81feab409fda1285e199c372b5f6763cbb6872533e111ce370\\\\\\",\\\\\\"starts_ns\\\\\\":1793021760000000000}\\",\\"protected_state_sha256\\":\\"64dd23845dc41ea82dc5eacb4e2e3d935a4170306bea7578bc50e6d1dba70282\\",\\"recovery_basis\\":\\"operator_approved_fresh_baseline_adoption\\",\\"review_authorization_sha256\\":\\"fe0b3a2443cf42ca9c2a7d3388872138bacbb5a5ede6d4cc6f2ef0057b24dae9\\",\\"reviewed_fix_sha256\\":\\"6b49ae7d6e03d4730f3444fda42c87680e70fa2033e39dfb284f8e1aebefd70d\\",\\"scope\\":\\"one_shot_recovery_only\\",\\"starts_ns\\":1793028000000000000,\\"successor_id\\":\\"finite-recovery-successor-20261026T152000Z\\"}"},"anchor_pre_enrollment_sha256":"5f3cb268d21565caa6a62532fa4f4b70003b7f76d3e5af2578cfa9c43ba46b0b","approval_artifact_sha256":"ae403e4451accb661b2ec4a3bb5f2d3278eb56a5543ecdd913629c5a703cfd37","approval_reference":"Sentinel_a8e455ea53e4819197c66b17c640d491-redated-20261026T171000Z","bundle_generation":"ec8ce6d2e16684e597b5756fe26a1e529adae2fb554fc5548b4ab38f3194e668","bundle_seal_sha256":"4baf35d188353e7cb4ddcfbc37f9cd2951dddf1bd15489fc3b997db062046ba6","cadence_ns":65000000000,"expires_ns":1793035800000000000,"max_entry_claims":4,"max_loss_usd":"100","max_notional_usd":"2000","max_positions":2,"max_shares":1,"max_source_requests":120,"max_ticks":10,"max_write_attempts":8,"pilot_id":"finite-paper-nvda-admission-20261026T171000Z","pre_enrollment_cohort_sha256":"8646636181a876b57652140eedec8cbc2cff51f10cc973da9265eb4aee838753","source_cadence_ns":20000000000,"starts_ns":1793034600000000000,"symbols":["NVDA"]}',
-        authority_id='b90a6f7dcc6ff8c9483ef4afdcaa363083a0329ee4ebbddcd03b494dac214edc',
-        predecessor_digest='b90a6f7dcc6ff8c9483ef4afdcaa363083a0329ee4ebbddcd03b494dac214edc',
-        predecessor_terminal_digest='3a90b4331cb5f4332b9ceda2ebab734407226988e7a072ff880da5ff722ff8e2',
-        closure_evidence_sha256='7d78b31d2caf0557fb8626275a4d0330156d4cb27578c2d0753cb0f1e35ed445',
-        current_anchor_sha256='1ac18739cb0db7d51a445aa9c628bd3e7759cd6020c4bf305fdcbd847aae9bb2',
-        current_cohort_sha256='e3540434ac4961bb1b87c597f8586beda5a83bfbf700ec301747850af4161d87',
-        current_runner_sha256='28035941273d28871861606606571f4e75d9ac22340fdaa47cfcd9c4f347d3fd',
-        protected_state_sha256='baf670cbe91376b004f20eb61984ef88701722cf04ca40a3053637e631b84e45',
-        expires_ns=1793038500000000000,
-        close_expires_ns=1793039460000000000,
-    ),
-)
+APPROVED_PILOT = None
 APPROVED_RECOVERY = None
 APPROVED_INSPECTION = None
 
