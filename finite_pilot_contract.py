@@ -111,6 +111,17 @@ class SessionAdmission:
 
 
 @dataclass(frozen=True)
+class RootChild:
+    root_id: str
+    index: int
+    expires_ns: int
+    close_expires_ns: int
+    def __post_init__(self):
+        require(type(self.root_id) is str and re.fullmatch('[A-Za-z0-9_.:-]{1,96}',self.root_id),'root_id_invalid')
+        require(type(self.index) is int and self.index in (0,1) and _ns(self.expires_ns) and _ns(self.close_expires_ns),'root_child_invalid')
+
+
+@dataclass(frozen=True)
 class PilotManifest:
     pilot_id: str
     starts_ns: int
@@ -134,9 +145,16 @@ class PilotManifest:
     pre_enrollment_cohort_sha256: str = ''
     admission: PilotAdmission | None = None
     session_admission: SessionAdmission | None = None
+    root_binding: RootChild | None = None
 
     def __post_init__(self):
         _common(self)
+        if self.root_binding is not None:
+            a=self.root_binding
+            require(type(a) is RootChild and self.admission is None and self.session_admission is None,'root_exclusive_child')
+            a.__post_init__()
+            require(self.starts_ns<a.expires_ns<=min(self.expires_ns,self.starts_ns+300*NS)
+                and self.expires_ns-self.starts_ns<=1200*NS and self.expires_ns<a.close_expires_ns<=self.expires_ns+60*NS,'root_child_window')
         if self.session_admission is not None:
             a=self.session_admission
             require(type(a) is SessionAdmission and self.admission is None,'session_exclusive_required')
@@ -174,6 +192,7 @@ class PilotManifest:
     def document(self):
         result=asdict(self)
         if self.session_admission is None: result.pop('session_admission')
+        if self.root_binding is None: result.pop('root_binding')
         return result
 
 
@@ -259,6 +278,9 @@ APPROVED_INSPECTION = None
 
 
 def require_pilot_manifest(manifest):
+    if type(manifest) is PilotManifest and manifest.root_binding is not None:
+        from finite_root_contract import require_child
+        return require_child(manifest)
     require(type(APPROVED_PILOT) is PilotManifest and manifest is APPROVED_PILOT,
             'pilot_not_approved')
     manifest.__post_init__()

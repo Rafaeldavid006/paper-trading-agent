@@ -334,6 +334,7 @@ class NativeObservation:
     snapshot: object = field(repr=False)
     quotes: tuple = field(repr=False)
     _native_json: bytes = field(repr=False)
+    execution_session: object = field(default=None,repr=False)
     mode: str = field(default='readonly_native_observation', init=False)
     executable: bool = field(default=False, init=False)
     coverage: str = field(default='bounded_all_status_scan_plus_supplied_durable_owned_ids', init=False)
@@ -364,7 +365,11 @@ class NativeObservationCollector:
     """
     def __init__(self, *, database, transport, expected_fingerprint, ledger_view,
                  symbols=('AAPL',), enabled=False, now_ns=time.time_ns,
-                 monotonic_ns=time.monotonic_ns, budget_factory=None):
+                 monotonic_ns=time.monotonic_ns, budget_factory=None,execution_policy=None):
+        if execution_policy is not None:
+            from execution_session_policy import require_policy
+            require_policy(execution_policy)
+        self.execution_policy=execution_policy
         require(type(enabled) is bool, 'invalid_enable')
         require(budget_factory is None or callable(budget_factory), 'budget_storage_unavailable')
         # Explicit trusted construction seam. Existing finite runtimes provide a
@@ -473,14 +478,19 @@ class NativeObservationCollector:
             clock, clock_received = self._get('/v2/clock')
             self._context(clock, identity)
             c = parse_clock(clock, now_ns=clock_received)
-            require(c.is_open, 'closed_session')
+            if self.execution_policy is None:require(c.is_open, 'closed_session')
             day = _datetime_ceil(clock_received).astimezone(ZoneInfo('America/New_York')).date().isoformat()
             calendar, calendar_received = self._get('/v2/calendar?start=' + day + '&end=' + day)
             self._context(calendar, identity)
-            session = parse_session(clock, calendar, received_at=_datetime_ceil(calendar_received),
-                                    now=_datetime_ceil(calendar_received))
-            session_open = timestamp(session.open.isoformat())
-            require(session_open <= c.timestamp_ns <= calendar_received < c.next_close_ns, 'session_mismatch')
+            execution_session=None
+            if self.execution_policy is None:
+                session = parse_session(clock, calendar, received_at=_datetime_ceil(calendar_received),now=_datetime_ceil(calendar_received))
+                session_open = timestamp(session.open.isoformat())
+                require(session_open <= c.timestamp_ns <= calendar_received < c.next_close_ns, 'session_mismatch')
+            else:
+                from execution_session_policy import context_from_calendar
+                execution_session=context_from_calendar(c,calendar,received_ns=calendar_received,now_ns=calendar_received,policy=self.execution_policy)
+                session_open=execution_session.core_open_ns
             positions, _ = self._get('/v2/positions')
             self._context(positions, identity)
             orders, parsed, ids, clients = [], [], set(), set()
@@ -491,7 +501,7 @@ class NativeObservationCollector:
                 require(type(page) is list and len(page) <= PAGE_SIZE, 'partial_or_invalid_order_page')
                 self._context(page, identity)
                 for raw in page:
-                    order = parse_order(raw)
+                    order = parse_order(raw,execution_policy=self.execution_policy)
                     require(order.updated_ns <= received, 'future_order')
                     require(order.id not in ids and order.client_order_id not in clients, 'duplicate_order_or_cursor')
                     require(not parsed or order.submitted_ns <= parsed[-1].submitted_ns, 'order_page_sort_mismatch')
@@ -510,7 +520,7 @@ class NativeObservationCollector:
                 # Independently query every durable ID, even absent from the scan.
                 raw, received = self._get('/v2/orders:by_client_order_id?client_order_id=' + cid)
                 self._context(raw, identity)
-                current = parse_order(raw)
+                current = parse_order(raw,execution_policy=self.execution_policy)
                 require(current.client_order_id == cid and current.updated_ns <= received, 'owned_lookup_mismatch')
                 require(cid in by_client, 'owned_order_missing_from_scan')
                 if cid in prior:
@@ -541,16 +551,17 @@ class NativeObservationCollector:
                           origin=PAPER_ORIGIN,
                           response_account_fingerprint=a.fingerprint, observed_ns=observed,
                           collection_complete=True, quotes=quotes_raw, quote_symbols=self.symbols, feed='iex')
+            if execution_session is not None:native['execution_session']=execution_session.document()
             snapshot = parse_snapshot(account, clock, positions, orders, origin=PAPER_ORIGIN,
                                       expected_fingerprint=self.expected, response_account_fingerprint=a.fingerprint,
-                                      observed_ns=observed, now_ns=observed, collection_complete=True)
+                                      observed_ns=observed, now_ns=observed, collection_complete=True,execution_policy=self.execution_policy,execution_session=None if execution_session is None else execution_session.document())
             native_json = json.dumps(native, sort_keys=True, separators=(',', ':'),
                                      default=lambda v: str(v) if type(v) is Decimal else _reject_json(v)).encode()
             digest = hashlib.sha256(native_json).hexdigest()
             self._check_time()
             status = 'observed_readonly'
             result = NativeObservation(observed, session_open, self._requests, self._pages,
-                                       self._owned_count, self._order_count, digest, snapshot, quotes, native_json)
+                                       self._owned_count, self._order_count, digest, snapshot, quotes, native_json,execution_session)
             # Audit failure refuses success; raw provider evidence never goes to DB.
             self._audit_rowid = self._budget.audit(at_ns=observed, status=status, attempts=self._requests,
                                owned_count=self._owned_count, order_count=self._order_count, digest=digest)
@@ -560,6 +571,9 @@ class NativeObservationCollector:
             for q in quotes:
                 fresh(q.timestamp_ns, accepted_ns)
             require(accepted_ns < c.next_close_ns, 'session_ended_during_collection')
+            if execution_session is not None:
+                from execution_session_policy import validate_execution
+                validate_execution(snapshot,accepted_ns,self.execution_policy)
             return result
         except SchemaError:
             status = 'native_schema_refused'

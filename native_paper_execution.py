@@ -54,7 +54,11 @@ class NativePaperHTTP:
     data_origin = DATA_ORIGIN
     feed = 'iex'
 
-    def __init__(self, key, secret, *, enabled=False, origin=PAPER_ORIGIN):
+    def __init__(self, key, secret, *, enabled=False, origin=PAPER_ORIGIN,execution_policy=None):
+        if execution_policy is not None:
+            from execution_session_policy import require_policy
+            require_policy(execution_policy)
+        self.execution_policy=execution_policy
         require(type(enabled) is bool and origin == PAPER_ORIGIN, 'paper_only_disabled_boundary')
         require(all(type(v) is str and 0 < len(v) <= 512 and all(33 <= ord(c) <= 126 for c in v)
                     for v in (key, secret)), 'invalid_credentials')
@@ -66,13 +70,16 @@ class NativePaperHTTP:
         self._opener = request.build_opener(request.ProxyHandler({}), NoRedirect())
 
     @staticmethod
-    def validate_payload(body):
+    def validate_payload(body, *, execution_policy=None):
+        if execution_policy is not None:
+            from execution_session_policy import require_policy
+            require_policy(execution_policy)
         require(type(body) is dict and set(body) == {'client_order_id','symbol','side','qty',
                 'type','time_in_force','limit_price','extended_hours'}, 'invalid_payload')
         require(type(body['client_order_id']) is str and re.fullmatch(r'[A-Za-z0-9_.-]{1,128}',body['client_order_id']), 'invalid_client_id')
         require(type(body['symbol']) is str and re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,11}',body['symbol']), 'invalid_symbol')
         require(body['side'] in ('buy','sell') and body['type']=='limit' and body['time_in_force']=='day'
-                and body['extended_hours'] is False, 'regular_day_limit_only')
+                and body['extended_hours'] is (execution_policy is not None), 'regular_day_limit_only')
         qty, price = number(body['qty'], quantity=True), number(body['limit_price'])
         require(0 < qty <= 1 and (body['side']!='buy' or qty == 1), 'one_share_entry_only')
         require(1 <= price <= 1000 and price % Decimal('.01') == 0, 'price_bound')
@@ -91,7 +98,7 @@ class NativePaperHTTP:
             require(body is None, 'forbidden_body')
         elif method == 'POST':
             require(path == '/v2/orders', 'forbidden_route')
-            self.validate_payload(body)
+            self.validate_payload(body,execution_policy=self.execution_policy)
         elif method == 'DELETE':
             require(body is None and type(path) is str and re.fullmatch(r'/v2/orders/[A-Za-z0-9_-]{1,128}',path), 'forbidden_cancel_route')
         else:
@@ -136,6 +143,7 @@ class ExecutionObservation:
     legacy_revision: object = field(repr=False)
     native_digest: str
     _json: bytes = field(repr=False)
+    execution_session: object = field(default=None,repr=False)
     def arguments(self):
         result=json.loads(self._json)
         result['quote_symbols']=tuple(result['quote_symbols'])
@@ -149,7 +157,12 @@ class NativeExecutionObserver:
     and equal their immutable recorded state. Only working/uncertain native IDs
     need independent lookup. History >=500 refuses, never truncates/archives away.
     """
-    def __init__(self, lifecycle, guard, wire, *, now_ns=time.time_ns, monotonic_ns=time.monotonic_ns):
+    def __init__(self, lifecycle, guard, wire, *, now_ns=time.time_ns, monotonic_ns=time.monotonic_ns,execution_policy=None):
+        if execution_policy is not None:
+            from execution_session_policy import require_policy
+            require_policy(execution_policy)
+        require(getattr(lifecycle,'execution_policy',None) is execution_policy,'observer_execution_policy_mismatch')
+        self.execution_policy=execution_policy
         self.lifecycle,self.guard,self.wire=lifecycle,guard,wire
         self.now_ns,self.monotonic_ns=now_ns,monotonic_ns
 
@@ -171,7 +184,7 @@ class NativeExecutionObserver:
         with self.lifecycle.tx() as db:
             dispatched={r['cid']:r['state'] for r in db.execute('SELECT cid,state FROM native_dispatch WHERE kind=\'submit\'')}
         for row in rows:
-            old=None if row['response'] is None else parse_order(json.loads(row['response']))
+            old=None if row['response'] is None else __import__('lifecycle_storage').decode_order(json.loads(row['response']))
             if old is not None and old.status not in TERMINAL:
                 pending.append(row['cid']); previous.append(old)
             elif old is None and row['cid'] in dispatched:
@@ -189,14 +202,14 @@ class NativeExecutionObserver:
             return OwnedLedgerView(self.lifecycle.binding, revision, tuple(pending), tuple(previous))
         collector=NativeObservationCollector(database=self.guard.state_database, transport=self.wire,
             expected_fingerprint=self.lifecycle.binding, ledger_view=view, symbols=self.lifecycle.allowlist,
-            enabled=True,now_ns=self.now_ns,monotonic_ns=self.monotonic_ns,budget_factory=budget_factory)
+            enabled=True,now_ns=self.now_ns,monotonic_ns=self.monotonic_ns,budget_factory=budget_factory,execution_policy=self.execution_policy)
         result=collector.collect(); raw=result.native_arguments()
         by_id={o.client_order_id:o for o in result.snapshot.orders}
         raw_by_id={o['client_order_id']:o for o in raw['orders']}
         for row in rows:
             if row['response'] is not None:
                 require(row['cid'] in by_id, 'terminal_archive_missing')
-                stored=json.loads(row['response']); previous=parse_order(stored)
+                stored=json.loads(row['response']); previous=__import__('lifecycle_storage').decode_order(stored)
                 reconcile_order(previous,by_id[row['cid']])
                 if previous.status in TERMINAL:
                     require(order_timestamps(stored)==order_timestamps(raw_by_id[row['cid']]),
@@ -205,7 +218,7 @@ class NativeExecutionObserver:
                 require(row['cid'] in dispatched, 'unattempted_claim_provider_collision')
         accepted=self.now_ns(); fresh(started,accepted)
         require(0<=self.monotonic_ns()-mono_started<=10*NS,'observation_deadline_exceeded')
-        legacy=self.guard.reconcile_legacy(raw['orders'],tuple(missing),now_ns=accepted,observed_ns=result.observed_ns)
+        legacy=self.guard.reconcile_legacy(raw['orders'],tuple(missing),now_ns=accepted,observed_ns=result.observed_ns,execution_policy=self.execution_policy)
         excluded=set(legacy.submitted_client_order_ids)
         require(not (excluded & {r['cid'] for r in rows}), 'legacy_native_id_collision')
         # The complete original book was reconciled above. The lifecycle's owned
@@ -214,13 +227,18 @@ class NativeExecutionObserver:
         self.guard.check(); fresh(result.observed_ns,self.now_ns()); fresh(started,self.now_ns())
         require(0<=self.monotonic_ns()-mono_started<=10*NS,'observation_deadline_exceeded')
         return ExecutionObservation(result.observed_ns,result.session_open_ns,self.guard.legacy_revision,
-            result.digest,json.dumps(raw,sort_keys=True,separators=(',',':')).encode())
+            result.digest,json.dumps(raw,sort_keys=True,separators=(',',':')).encode(),result.execution_session)
 
 
 class NativePaperDispatcher:
     """Durable one-attempt writes from Decimal claims; callable default disabled."""
     def __init__(self, lifecycle, guard, transport, *, enabled=False, now_ns=time.time_ns,
-                 monotonic_ns=time.monotonic_ns, pre_write_context=None):
+                 monotonic_ns=time.monotonic_ns, pre_write_context=None,execution_policy=None):
+        if execution_policy is not None:
+            from execution_session_policy import require_policy
+            require_policy(execution_policy)
+        require(getattr(lifecycle,'execution_policy',None) is execution_policy,'dispatcher_execution_policy_mismatch')
+        self.execution_policy=execution_policy
         require(type(enabled) is bool and type(lifecycle) is Lifecycle, 'invalid_dispatcher')
         require(pre_write_context is None or callable(pre_write_context), 'invalid_write_context')
         self.pre_write_context=pre_write_context
@@ -228,7 +246,7 @@ class NativePaperDispatcher:
                 and lifecycle.session_policy.max_loss<=Decimal('100'), 'bounded_risk_policy_required')
         self.lifecycle,self.guard,self.enabled,self.now_ns=lifecycle,guard,enabled,now_ns
         self.wire=CoordinatedWire(transport,guard,now_ns)
-        self.observer=NativeExecutionObserver(lifecycle,guard,self.wire,now_ns=now_ns,monotonic_ns=monotonic_ns)
+        self.observer=NativeExecutionObserver(lifecycle,guard,self.wire,now_ns=now_ns,monotonic_ns=monotonic_ns,execution_policy=execution_policy)
         self.observation=None
         with lifecycle.tx() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS native_dispatch(kind TEXT NOT NULL,cid TEXT NOT NULL,
@@ -270,7 +288,11 @@ class NativePaperDispatcher:
         now=self.now_ns(); raw=self.observation.arguments()
         snapshot=self.lifecycle._parse(raw,now)
         parse_latest_quotes(raw['quotes'],symbols=tuple(raw['quote_symbols']),feed=raw['feed'],now_ns=now)
-        require(snapshot.clock.is_open and self.observation.session_open_ns<=now<snapshot.clock.next_close_ns,'regular_session_required')
+        if self.execution_policy is None:
+            require(snapshot.clock.is_open and self.observation.session_open_ns<=now<snapshot.clock.next_close_ns,'regular_session_required')
+        else:
+            from execution_session_policy import validate_execution
+            validate_execution(snapshot,now,self.execution_policy)
         return raw,snapshot,now
 
     def _reserve(self, kind, cid, now):
@@ -308,24 +330,34 @@ class NativePaperDispatcher:
         require(owned=={p.symbol:p.quantity for p in snapshot.positions},'unmanaged_position')
         if row['side']=='buy':
             require(qty==1 and row['symbol'] not in owned and len(owned)<2,'one_share_position_cap')
-            require(now-self.observation.session_open_ns>=300*NS and snapshot.clock.next_close_ns-now>=4500*NS,'entry_session_window')
+            if self.execution_policy is None:
+                require(now-self.observation.session_open_ns>=300*NS and snapshot.clock.next_close_ns-now>=4500*NS,'entry_session_window')
+            else:
+                from execution_session_policy import validate_execution
+                validate_execution(snapshot,now,self.execution_policy)
+                require(snapshot.clock.next_close_ns-now>=4500*NS,'entry_session_window')
+            from execution_session_policy import accounting_day_start
+            accounting_open=accounting_day_start(self.observation.session_open_ns)
             exposure=sum((max(p.market_value,p.quantity*1000) for p in snapshot.positions),Decimal(0))
             require(price<=snapshot.account.cash and exposure+price<=2000,'entry_cash_or_exposure')
             self.guard.legacy_entry_gate(now_ns=now)
-            legacy_count=self.guard.legacy_buy_claims(session_open_ns=self.observation.session_open_ns,session_close_ns=snapshot.clock.next_close_ns)
+            legacy_count=self.guard.legacy_buy_claims(session_open_ns=accounting_open,session_close_ns=snapshot.clock.next_close_ns)
             state=self.lifecycle.status(); risk=next((r for r in state['risk_sessions'] if r['session_close_ns']==snapshot.clock.next_close_ns),None)
             require(risk is not None and not risk['loss_latched'] and risk['entry_claims']+legacy_count<=4,'shared_entry_risk_gate')
-            require(sum(r['side']=='buy' and r['symbol']==row['symbol'] and r['claimed']>=self.observation.session_open_ns for r in rows)==1,'symbol_session_cap')
+            require(sum(r['side']=='buy' and r['symbol']==row['symbol'] and r['claimed']>=accounting_open for r in rows)==1,'symbol_session_cap')
         else:
             intents=tuple(OwnedIntent(self.lifecycle.binding,r['cid'],r['symbol'],r['side'],Decimal(r['quantity'])) for r in known.values())
             require(qty==owned_exit_quantity(snapshot,intents=intents,symbol=row['symbol'],now_ns=now),'exact_reduction_required')
         payload=dict(client_order_id=cid,symbol=row['symbol'],side=row['side'],qty=decimal_text(qty),type='limit',
-            time_in_force='day',limit_price=decimal_text(price),extended_hours=False)
-        NativePaperHTTP.validate_payload(payload)
+            time_in_force='day',limit_price=decimal_text(price),extended_hours=self.execution_policy is not None)
+        NativePaperHTTP.validate_payload(payload,execution_policy=self.execution_policy)
         status,asset=self.wire.call('GET','/v2/assets/'+row['symbol'])
         require(status==200 and type(asset) is dict and asset.get('symbol')==row['symbol'] and asset.get('class')=='us_equity'
                 and asset.get('status')=='active' and asset.get('tradable') is True,'invalid_asset')
         require(qty==qty.to_integral_value() or asset.get('fractionable') is True,'fractional_exit_unavailable')
+        if self.execution_policy is not None and (row['side']=='buy' or qty!=qty.to_integral_value()):
+            attributes=asset.get('attributes')
+            require(asset.get('fractionable') is True and type(attributes) is list and len(attributes)<=32 and all(type(x) is str and 0<len(x)<=64 for x in attributes) and len(set(attributes))==len(attributes) and 'fractional_eh_enabled' in attributes,'fractional_extended_exit_unavailable')
         self._gate()  # All clocks, quotes and controls are revalidated after asset I/O.
         # Coordinator control locks span the final uncertainty marker and wire
         # call. A committed runner/pipeline stop cannot be missed before sending.

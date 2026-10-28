@@ -87,6 +87,7 @@ class Order:
     canceled_ns: int | None = None
     expired_ns: int | None = None
     failed_ns: int | None = None
+    extended_hours: bool = False
 
 @dataclass(frozen=True)
 class Quote:
@@ -103,6 +104,7 @@ class Snapshot:
     positions: tuple
     orders: tuple
     observed_ns: int
+    execution_session: object = None
 
 
 def parse_account(raw, *, expected_fingerprint, origin):
@@ -134,10 +136,17 @@ def parse_positions(raw):
     require(len({p.symbol for p in result})==len(result), 'duplicate_position')
     return tuple(result)
 
-def parse_order(raw):
+def parse_order(raw, *, execution_policy=None):
+    if execution_policy is not None:
+        from execution_session_policy import require_policy
+        require_policy(execution_policy)
+    return _parse_order(raw,allow_extended=execution_policy is not None)
+
+def _parse_order(raw, *, allow_extended=False):
+    """Internal structural decoder; private storage uses only after strict tag validation."""
     r=obj(raw)
     require(r.get('asset_class')=='us_equity' and r.get('side') in ('buy','sell'), 'unsupported_order_asset')
-    require(r.get('type')=='limit' and r.get('time_in_force')=='day' and r.get('extended_hours') is False, 'unsupported_order_policy')
+    require(r.get('type')=='limit' and r.get('time_in_force')=='day' and (r.get('extended_hours') is False or (allow_extended is True and r.get('extended_hours') is True)), 'unsupported_order_policy')
     require(r.get('order_class') in ('simple','') and not r.get('legs') and not r.get('replaced_by') and not r.get('replaces') and r.get('notional') is None, 'unsupported_order_structure')
     q,f=number(r.get('qty'),quantity=True),number(r.get('filled_qty'),quantity=True)
     require(q>0 and f<=q, 'invalid_fill_quantity')
@@ -158,11 +167,11 @@ def parse_order(raw):
         if event is not None: require(submitted<=event<=updated, 'order_event_timestamp_order')
     price=number(r.get('limit_price')); require(price>0,'invalid_limit_price')
     require(f==0 or (avg<=price if r['side']=='buy' else avg>=price), 'fill_beyond_limit')
-    return Order(label(r.get('id')),label(r.get('client_order_id')),label(r.get('symbol')),r['side'],q,f,avg,s,submitted,updated,price,created,*events)
+    return Order(label(r.get('id')),label(r.get('client_order_id')),label(r.get('symbol')),r['side'],q,f,avg,s,submitted,updated,price,created,*events,r['extended_hours'])
 
 def reconcile_order(previous, current):
     """No stale update, mutation or terminal resurrection is silently accepted."""
-    identity=lambda x:(x.id,x.client_order_id,x.symbol,x.side,x.quantity,x.created_ns,x.submitted_ns,x.limit_price)
+    identity=lambda x:(x.id,x.client_order_id,x.symbol,x.side,x.quantity,x.created_ns,x.submitted_ns,x.limit_price,x.extended_hours)
     require(identity(previous)==identity(current), 'order_identity_mutated')
     require(previous.status!='pending_cancel' or current.status in TERMINAL|{'pending_cancel'}, 'cancel_state_regression')
     require(current.updated_ns>=previous.updated_ns and current.filled>=previous.filled, 'order_regression')
@@ -170,7 +179,7 @@ def reconcile_order(previous, current):
     require(previous.status not in TERMINAL or current==previous, 'terminal_order_changed')
     return current
 
-def parse_snapshot(account, clock, positions, orders, *, origin, expected_fingerprint, response_account_fingerprint, observed_ns, now_ns, collection_complete=False):
+def parse_snapshot(account, clock, positions, orders, *, origin, expected_fingerprint, response_account_fingerprint, observed_ns, now_ns, collection_complete=False, execution_policy=None, execution_session=None):
     """Completeness and response identity are trusted caller attestations, NOT provider fields.
     Caller must bind every response to the same authenticated transport and verify every
     known durable client ID independently. A short filtered page alone is not evidence.
@@ -180,10 +189,16 @@ def parse_snapshot(account, clock, positions, orders, *, origin, expected_finger
     a=parse_account(account,expected_fingerprint=expected_fingerprint,origin=origin)
     require(response_account_fingerprint==a.fingerprint, 'response_context_mismatch')
     require(type(orders) is list and len(orders)<500, 'orders_truncated_or_invalid')
-    os=tuple(parse_order(r) for r in orders)
+    os=tuple(parse_order(r,execution_policy=execution_policy) for r in orders)
     require(len({o.id for o in os})==len(os) and len({o.client_order_id for o in os})==len(os), 'duplicate_order')
     require(all(o.updated_ns<=observed_ns for o in os),'future_order')
-    return Snapshot(a,parse_clock(clock,now_ns=now_ns),parse_positions(positions),os,observed_ns)
+    parsed_clock=parse_clock(clock,now_ns=now_ns)
+    context=None
+    if execution_policy is not None:
+        from execution_session_policy import validate_context
+        context=validate_context(execution_session,parsed_clock,now_ns,execution_policy)
+    else:require(execution_session is None,'unexpected_execution_context')
+    return Snapshot(a,parsed_clock,parse_positions(positions),os,observed_ns,context)
 
 def parse_latest_quotes(raw, *, symbols, feed, now_ns):
     r=obj(raw); require(feed in ('iex','sip'), 'unknown_feed')

@@ -15,7 +15,7 @@ import stat
 import time
 
 from alpaca_schema import (Account, Clock, Position, Quote, Snapshot, SchemaError,
-                           fresh, label, number, parse_latest_quotes, parse_order,
+                           fresh, label, number, parse_latest_quotes, parse_order, _parse_order,
                            timestamp)
 
 VERSION = 1
@@ -72,29 +72,36 @@ def dumps(value):
     return result
 
 
-def project_order(raw):
+def project_order(raw, *, execution_policy=None):
+    parse_order(raw,execution_policy=execution_policy)
+    return _project_order(raw,allow_extended=execution_policy is not None)
+
+def _project_order(raw, *, allow_extended=False):
     """Keep validated native-shaped response fields for private reconciliation.
 
     Preserve actual created/submitted/event timestamps, including their precision.
     Do not invent provider IDs or timestamps when materializing stored orders.
     Falsey optional structure is normalized, not copied as unvalidated content.
     """
-    order = parse_order(raw)
+    order = _parse_order(raw,allow_extended=allow_extended)
     result = {key: raw.get(key) for key in ORDER_FIELDS}
     result.update(asset_class='us_equity', type='limit', time_in_force='day',
-                  order_class='simple', extended_hours=False,
+                  order_class='simple', extended_hours=order.extended_hours,
                   replaced_by=None, replaces=None, notional=None, legs=None,
                   qty=format(order.quantity, 'f'), filled_qty=format(order.filled, 'f'),
                   limit_price=format(order.limit_price, 'f'),
                   filled_avg_price=None if order.average_price is None else format(order.average_price, 'f'))
+    if order.extended_hours:result['execution_policy']='iex_premarket'
     return result
 
 
 def decode_order(value):
-    _fields(value, ORDER_FIELDS)
-    # Reject hidden fields or noncanonical structure, even in private storage.
-    parsed = parse_order(value)
-    require(project_order(value) == value)
+    tagged=type(value) is dict and 'execution_policy' in value
+    _fields(value, ORDER_FIELDS|{'execution_policy'} if tagged else ORDER_FIELDS)
+    if tagged:require(value['execution_policy']=='iex_premarket' and value['extended_hours'] is True)
+    # A stored tag describes actual historical policy; it grants no fresh action.
+    parsed = _parse_order(value,allow_extended=tagged)
+    require(_project_order(value,allow_extended=tagged) == value)
     return parsed
 
 
@@ -126,9 +133,9 @@ def _quote_projection(raw, symbols, feed):
         return None
 
 
-def project_snapshot(snapshot, raw):
+def project_snapshot(snapshot, raw, *, execution_policy=None):
     a, c = snapshot.account, snapshot.clock
-    return {
+    result = {
         'format': 'decimal_lifecycle_snapshot', 'version': VERSION,
         'account': dict(fingerprint=a.fingerprint, cash=format(a.cash, 'f'),
                         equity=format(a.equity, 'f'), last_equity=format(a.last_equity, 'f')),
@@ -137,10 +144,12 @@ def project_snapshot(snapshot, raw):
         'positions': [dict(symbol=p.symbol, quantity=format(p.quantity, 'f'),
                            available=format(p.available, 'f'), market_value=format(p.market_value, 'f'))
                       for p in snapshot.positions],
-        'orders': [project_order(o) for o in raw['orders']],
+        'orders': [project_order(o,execution_policy=execution_policy) for o in raw['orders']],
         'observed_ns': snapshot.observed_ns,
         'quotes': _quote_projection(raw['quotes'], raw['quote_symbols'], raw['feed']),
     }
+    if snapshot.execution_session is not None:result['execution_session']=snapshot.execution_session.document()
+    return result
 
 
 def decode_snapshot(value, *, binding, now_ns=None):
@@ -149,7 +158,8 @@ def decode_snapshot(value, *, binding, now_ns=None):
     Reopening storage validates structure but does not refresh the observation or
     run session accounting. Execution paths additionally check original freshness.
     """
-    _fields(value, ('format', 'version', 'account', 'clock', 'positions', 'orders', 'observed_ns', 'quotes'))
+    context_field=type(value) is dict and 'execution_session' in value
+    _fields(value, ('format', 'version', 'account', 'clock', 'positions', 'orders', 'observed_ns', 'quotes')+(('execution_session',) if context_field else ()))
     require(value['format'] == 'decimal_lifecycle_snapshot' and type(value['version']) is int
             and value['version'] == VERSION, 'unsupported_storage_version')
     a = _fields(value['account'], ('fingerprint', 'cash', 'equity', 'last_equity'))
@@ -180,7 +190,12 @@ def decode_snapshot(value, *, binding, now_ns=None):
     if now_ns is not None:
         fresh(observed, now_ns)
         fresh(clock.timestamp_ns, now_ns)
-    return Snapshot(account, clock, tuple(ps), orders, observed)
+    context=None
+    if context_field:
+        from execution_session_policy import stored_context
+        context=stored_context(value['execution_session'],clock)
+    require(context is not None or not any(o.extended_hours for o in orders),'stored_execution_context_missing')
+    return Snapshot(account, clock, tuple(ps), orders, observed,context)
 
 
 def decode_quotes(value, *, now_ns=None):

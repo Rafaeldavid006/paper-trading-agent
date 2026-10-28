@@ -44,7 +44,151 @@ PUBLIC_REASONS = frozenset(('compiled_pilot_approval_missing', 'compiled_recover
 # provider responses, paths, account/client identifiers and manifest contents.
 # Unknown or wrapped failures remain unknown instead of inventing a diagnosis.
 ERROR_CODES = frozenset((
+    'root_stored_execution_policy_mismatch',
+    'smoke_buy_limit_not_current_ask',
+    'smoke_cancel_too_early',
+    'smoke_consumed_entry_without_intent',
+    'smoke_disabled',
+    'smoke_dispatcher_required',
+    'smoke_entry_consumed',
+    'smoke_entry_envelope',
+    'smoke_entry_inactive',
+    'smoke_entry_not_claimed',
+    'smoke_entry_price_or_spread',
+    'smoke_exact_identity',
+    'smoke_existing_write_context',
+    'smoke_exit_limit_not_current_bid',
+    'smoke_fixed_scope_required',
+    'smoke_identity_required',
+    'smoke_initial_flat_required',
+    'smoke_nonterminal_history',
+    'smoke_not_approved',
+    'smoke_owned_cancel',
+    'smoke_owned_order_missing',
+    'smoke_position_envelope',
+    'smoke_quantity_cap',
+    'smoke_quote_required',
+    'smoke_quote_spread',
+    'smoke_root_caps_required',
+    'smoke_runner_begin_refused',
+    'smoke_second_child_readonly',
+    'smoke_stage_timeout',
+    'smoke_write_identity',
+    'smoke_write_route',
+    'smoke_write_without_entry_authority',
+    'smoke_zero_fill_flatness_unproven',
+    'two_children_required',
+    'typed_child_required',
+    'typed_root_required',
+    'typed_smoke_required',
+    'v1_closed_predecessor_required',
     'unclassified_failure', 'operation_timeout', 'state_sqlite_refused',
+    'exact_root_child_required',
+    'root_admission_broker_invalid',
+    'root_admission_expired',
+    'root_admission_get_cap',
+    'root_admission_history_changed',
+    'root_aggregate_cap',
+    'root_anchor_changed',
+    'root_applied_evidence_invalid',
+    'root_applied_invalid',
+    'root_approval_invalid',
+    'root_arguments',
+    'root_attempt_consumed',
+    'root_broker_cap',
+    'root_broker_id_changed',
+    'root_broker_invalid',
+    'root_broker_stage_invalid',
+    'root_canonical_validator_required',
+    'root_cap_invalid',
+    'root_cas_failed',
+    'root_cas_poststate_changed',
+    'root_child_binding_changed',
+    'root_child_cap',
+    'root_child_document_changed',
+    'root_child_inactive',
+    'root_child_invalid',
+    'root_child_mismatch',
+    'root_child_not_enrolled',
+    'root_child_overlap',
+    'root_child_sequence',
+    'root_child_tick_allocation',
+    'root_clean_runner_required',
+    'root_clock_regression',
+    'root_dispatch_foreign',
+    'root_dispatch_history_incomplete',
+    'root_dispatch_outcome_uncertain',
+    'root_dispatch_stage_unproven',
+    'root_duplicate_cid',
+    'root_end_invalid',
+    'root_end_payload',
+    'root_event_invalid',
+    'root_event_kind_invalid',
+    'root_event_payload',
+    'root_evidence_stale',
+    'root_exclusive_required',
+    'root_expired',
+    'root_factory_override',
+    'root_flat_terminal_required',
+    'root_foreign_or_missing_order',
+    'root_founding_binding_changed',
+    'root_fresh_regular_observation',
+    'root_get_cap',
+    'root_get_only',
+    'root_get_reservation_required',
+    'root_global_sequence',
+    'root_guard_mismatch',
+    'root_halt_invalid',
+    'root_history_bound',
+    'root_history_changed',
+    'root_history_lookup_budget',
+    'root_id_invalid',
+    'root_import_invalid',
+    'root_initial_anchor_changed',
+    'root_initial_pins_changed',
+    'root_legacy_history_changed',
+    'root_legacy_history_incomplete',
+    'root_not_approved',
+    'root_orphan_session',
+    'root_owned_identity_changed',
+    'root_owned_residual_exposure',
+    'root_pins_invalid',
+    'root_poststate_changed',
+    'root_predecessor_invalid',
+    'root_predecessor_not_ended',
+    'root_prepared_cas_invalid',
+    'root_prepared_invalid',
+    'root_prestate_changed',
+    'root_quote_scope',
+    'root_registry_changed',
+    'root_remaining_budget_required',
+    'root_reviewed_transport_required',
+    'root_runner_changed',
+    'root_sessions_missing',
+    'root_single_open_required',
+    'root_source_cap',
+    'root_source_invalid',
+    'root_stage_end_invalid',
+    'root_stage_inactive',
+    'root_stage_invalid',
+    'root_start_consumed',
+    'root_structured_end_required',
+    'root_submission_uncertain',
+    'root_terminal_action',
+    'root_terminal_consumed',
+    'root_terminal_window',
+    'root_test_override',
+    'root_typed_evidence_required',
+    'root_typed_observation_required',
+    'root_v1_bridge_required',
+    'root_window_invalid',
+    'root_write_broker_unmatched',
+    'root_write_cap',
+    'root_write_history_unmatched',
+    'root_write_invalid',
+    'root_write_replay',
+    'root_write_reservation_missing',
+
     'native_schema_refused', 'tick_completion_unproven', 'finite_scope_exhausted',
     'unexpected_tick_outcome', 'credentials_missing', 'source_interrupted',
     'source_stage_refused', 'existing_attention_preserved',
@@ -174,6 +318,9 @@ def public(phase, reason, *, outcome=None, error_stage=None, error_code=None, **
     result = dict(mode='finite_paper_pilot', phase=phase, reason=reason,
                   order_permission=permission, execution_ready=False,
                   historical_cause_proven=False, **counts)
+    import finite_root_contract as rc
+    if type(rc.APPROVED_ROOT) is rc.RootGrant and type(rc.APPROVED_ROOT.smoke) is rc.ExecutionSmokeScope:
+        result.update(mode='finite_paper_execution_smoke',research_signal=False,session_mode=rc.APPROVED_ROOT.smoke.session_mode,order_permission='finite_paper_smoke_scope' if phase in ('initialize','tick') else 'revoked' if phase=='manual_handoff' else 'none')
     if outcome is not None:
         result['outcome'] = outcome
     if error_stage is not None:
@@ -184,6 +331,9 @@ def public(phase, reason, *, outcome=None, error_stage=None, error_code=None, **
 
 
 def _exhausted(row, manifest):
+    if manifest.root_binding is not None:
+        from finite_root_journal import RootJournal
+        return RootJournal._exhausted(row,manifest)
     if manifest.session_admission is not None:
         from finite_pilot_sessions import SessionJournal
         return SessionJournal._exhausted(row,manifest)
@@ -341,10 +491,15 @@ def validate_recovery_evidence(manifest, *, bundle, guard, now_ns):
 
 
 def run_phase(phase, *, paths=None, test_only=False, environ=None, now_ns=None,
-              monotonic_ns=None, broker_factory=None, source_factory=None):
+              monotonic_ns=None, broker_factory=None, source_factory=None, root_index=None):
     """Synthetic path/factory injection is test-only; no approval override exists."""
     require(phase in PHASES, 'invalid_arguments')
     manifest = contract.APPROVED_RECOVERY if phase == 'recover' else contract.APPROVED_PILOT
+    if root_index is not None:
+        from finite_root_contract import child
+        require(phase in ('initialize','source','tick'),'root_phase_invalid');manifest=child(root_index)
+        import finite_root_contract as rc
+        require(rc.APPROVED_ROOT.smoke is None or phase!='source','smoke_source_forbidden')
     # This first branch must precede all filesystem, SQL, clock, credential and
     # network access, including construction of any state or transport object.
     if manifest is None:
@@ -364,6 +519,16 @@ def run_phase(phase, *, paths=None, test_only=False, environ=None, now_ns=None,
     bundle = resolve_approved_bundle(manifest, paths=paths, test_only=test_only)
     bundle.verify()
     journal = AnchorJournal(bundle, clock)
+    if phase!='recover' and manifest.root_binding is not None:
+        from finite_root_journal import RootJournal
+        journal=RootJournal(bundle,clock)
+        if phase=='initialize':
+            from finite_root_worker import AdmissionJournal
+            guard=SharedAccountGuard(bundle.paths['legacy'],bundle.paths['lifecycle'],bundle.binding,enabled=True,state_database=bundle.paths['guard'],test_only=test_only,runtime_bundle=bundle)
+            admission=AdmissionJournal(bundle,clock)
+            admission.admit(manifest,guard=guard,environ=environ,test_only=test_only,broker_factory=broker_factory)
+            admission.startup_gate(manifest)
+            return public('initialize','pilot_enrolled')
     if phase!='recover' and manifest.session_admission is not None:
         from finite_pilot_sessions import SessionJournal
         journal=SessionJournal(bundle,clock)
@@ -424,18 +589,26 @@ def run_phase(phase, *, paths=None, test_only=False, environ=None, now_ns=None,
                 return public('manual_handoff', 'unresolved_exposure_requires_operator')
             return public('source', 'source_collected', source_events=result.event_count,
                           source_requests=result.request_count)
+        if manifest.root_binding is not None:
+            import finite_root_contract as rc
+            if rc.APPROVED_ROOT.smoke is not None:
+                from finite_execution_smoke import run_tick
+                return run_tick(bundle,journal,manifest,environ=env,now_ns=clock,monotonic_ns=monotonic,test_only=test_only,broker_factory=broker_factory)
         return _tick(bundle, journal, manifest, environ=env, now_ns=clock, monotonic_ns=monotonic,
                      test_only=test_only, broker_factory=broker_factory)
 
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
+    root_index=None
+    if len(args)==2 and args[1] in ('--root-child=0','--root-child=1'):
+        root_index=int(args[1][-1]);args=args[:1]
     phase = args[0][2:] if len(args) == 1 and type(args[0]) is str and args[0].startswith('--') else ''
     if phase not in PHASES:
         print(json.dumps(public('invalid', 'invalid_arguments'), sort_keys=True), flush=True)
         return 2
     try:
-        result = run_phase(phase)
+        result = run_phase(phase) if root_index is None else run_phase(phase,root_index=root_index)
         print(json.dumps(result, sort_keys=True), flush=True)
         return 1 if result['phase'] == 'manual_handoff' else 0
     except Exception as exc:

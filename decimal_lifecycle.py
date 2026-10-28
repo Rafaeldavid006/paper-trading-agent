@@ -54,7 +54,11 @@ class Receipt:
     executable: bool = False
 
 class Lifecycle:
-    def __init__(self, path, account_fingerprint, allowlist=('AAPL',), *, session_risk_policy=None):
+    def __init__(self, path, account_fingerprint, allowlist=('AAPL',), *, session_risk_policy=None,execution_policy=None):
+        if execution_policy is not None:
+            from execution_session_policy import require_policy
+            require_policy(execution_policy)
+        self.execution_policy=execution_policy
         check(str(path) != ':memory:' and bool(str(path)), 'durable_path_required')
         check(isinstance(account_fingerprint,str) and re.fullmatch('[0-9a-f]{64}',account_fingerprint), 'invalid_binding')
         check(type(allowlist) is tuple and allowlist and len(set(allowlist))==len(allowlist), 'invalid_universe')
@@ -144,7 +148,7 @@ class Lifecycle:
         check(previous_clock is None or s.clock.timestamp_ns>=previous_clock,
               'session_clock_regression')
         previous=db.execute('SELECT * FROM risk_sessions ORDER BY session_close_ns DESC LIMIT 1').fetchone()
-        if s.clock.is_open:
+        if s.clock.is_open or s.execution_session is not None:
             session=s.clock.next_close_ns
             check(previous is None or session>=previous['session_close_ns'],
                   'session_regression')
@@ -217,7 +221,7 @@ class Lifecycle:
 
     def _parse(self, raw, now_ns):
         """Native input only: a private projection cannot prove account identity."""
-        return parse_snapshot(**{k:v for k,v in raw.items() if k not in ('quotes','quote_symbols','feed')},expected_fingerprint=self.binding,now_ns=now_ns)
+        return parse_snapshot(**{k:v for k,v in raw.items() if k not in ('quotes','quote_symbols','feed')},expected_fingerprint=self.binding,now_ns=now_ns,execution_policy=getattr(self,'execution_policy',None))
 
     def _load_snapshot(self, encoded, now_ns):
         """Private stored-state decoder; never reconstruct a native account ID."""
@@ -253,8 +257,9 @@ class Lifecycle:
                 check(type(now_ns) is int,'invalid_response_clock')
                 row=db.execute('SELECT * FROM intents WHERE cid=?',(client_order_id,)).fetchone()
                 check(row is not None,'response_not_owned')
-                projected=storage.project_order(raw_order)
+                projected=storage.project_order(raw_order,execution_policy=getattr(self,'execution_policy',None))
                 parsed=storage.decode_order(projected)
+                check(parsed.extended_hours==(getattr(self,'execution_policy',None) is not None),'response_execution_policy_mismatch')
                 check(parsed.client_order_id==client_order_id,'intent_order_mismatch')
                 check((parsed.symbol,parsed.side,parsed.quantity,parsed.limit_price)==
                       (row['symbol'],row['side'],Decimal(row['quantity']),Decimal(row['price'])),
@@ -271,9 +276,10 @@ class Lifecycle:
         if error: raise LifecycleError(error)
         return parsed
 
-    def observe(self, account, clock, positions, orders, *, origin, response_account_fingerprint, observed_ns, now_ns, collection_complete=False, quotes=None, quote_symbols=(), feed='iex'):
+    def observe(self, account, clock, positions, orders, *, origin, response_account_fingerprint, observed_ns, now_ns, collection_complete=False, quotes=None, quote_symbols=(), feed='iex',execution_session=None):
         raw=dict(account=account,clock=clock,positions=positions,orders=orders,origin=origin,
                  response_account_fingerprint=response_account_fingerprint,observed_ns=observed_ns,collection_complete=collection_complete,quotes=quotes,quote_symbols=quote_symbols,feed=feed)
+        if execution_session is not None:raw['execution_session']=execution_session
         error=None
         with self.tx() as db:
             try:
@@ -282,7 +288,7 @@ class Lifecycle:
                 s=self._parse(raw,now_ns)
                 previous=db.execute('SELECT observed,snapshot FROM control').fetchone()
                 check(previous['observed'] is None or observed_ns>=previous['observed'],'snapshot_regression')
-                projection=storage.project_snapshot(s,raw)
+                projection=storage.project_snapshot(s,raw,execution_policy=getattr(self,'execution_policy',None))
                 encoded=storage.dumps(projection)
                 check(previous['observed']!=observed_ns or previous['snapshot']==encoded,'conflicting_snapshot')
                 registered={r['cid']:r for r in db.execute('SELECT * FROM intents')}
@@ -325,7 +331,10 @@ class Lifecycle:
             self._check_stored_state(db)
             raw=storage.loads(c['snapshot'])
             s=storage.decode_snapshot(raw,binding=self.binding,now_ns=now_ns)
-            check(s.clock.is_open and now_ns < s.clock.next_close_ns,'market_closed')
+            if getattr(self,'execution_policy',None) is not None:
+                from execution_session_policy import validate_execution
+                validate_execution(s,now_ns,self.execution_policy)
+            else:check(s.clock.is_open and now_ns < s.clock.next_close_ns,'market_closed')
             qs=storage.decode_quotes(raw['quotes'],now_ns=now_ns)
             quote=next((q for q in qs if q.symbol==p.symbol),None)
             check(quote is not None,'quote_missing')

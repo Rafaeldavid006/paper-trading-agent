@@ -458,7 +458,7 @@ class RuntimeStateBundle:
                          'bundle_lifecycle_state_corrupt')
             else:
                 _require(policy[2] == snapshot.clock.timestamp_ns, 'bundle_risk_state_corrupt')
-                if snapshot.clock.is_open:
+                if snapshot.clock.is_open or getattr(snapshot,'execution_session',None) is not None:
                     _require(sessions and sessions[-1][0] == snapshot.clock.next_close_ns,
                              'bundle_risk_state_corrupt')
             cancel_ids = set()

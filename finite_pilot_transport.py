@@ -56,8 +56,14 @@ class FinitePilotTransport:
         self.__dispatch = None
         self.__coordinator = None
         self.__pending = None
+        self.__opened = False
         factory = NativePaperHTTP if transport_factory is None else transport_factory
-        self.__transport = factory(key, secret, enabled=True)
+        policy=None
+        if manifest.root_binding is not None:
+            import finite_root_contract as rc
+            if rc.APPROVED_ROOT.smoke is not None:policy=rc.smoke_execution_policy(manifest)
+        self.__execution_policy=policy
+        self.__transport = factory(key, secret, enabled=True,**({} if policy is None else dict(execution_policy=policy)))
         _require(getattr(self.__transport, 'paper_origin', None) == PAPER_ORIGIN
                  and getattr(self.__transport, 'data_origin', None) == DATA_ORIGIN
                  and getattr(self.__transport, 'feed', None) == 'iex', 'transport_binding')
@@ -70,6 +76,15 @@ class FinitePilotTransport:
     def bind(self, coordinator):
         from native_paper_runner import BoundedPaperRunner, NativeMarketSource
         from primary_earnings_source import PrimaryEarningsSource
+        from finite_execution_smoke import SmokeCoordinator
+        if type(coordinator) is SmokeCoordinator:
+            import finite_root_contract as rc
+            rc.smoke_scope(self.manifest)
+            dispatch=coordinator.dispatcher
+            _require(self.__dispatch is None and coordinator.manifest is self.manifest and coordinator.journal is self.journal
+                and type(dispatch) is NativePaperDispatcher and dispatch.wire.transport is self
+                and tuple(dispatch.lifecycle.allowlist)==('NVDA',),'smoke_exact_coordinator_required')
+            self.__dispatch,self.__coordinator=dispatch,coordinator;return
         _require(self.__dispatch is None and type(coordinator) is BoundedPaperRunner,
                  'single_coordinator_binding_required')
         runner = coordinator.runner
@@ -85,6 +100,12 @@ class FinitePilotTransport:
     def _bound(self):
         contract.require_pilot_manifest(self.manifest)
         dispatch, coordinator = self.__dispatch, self.__coordinator
+        from finite_execution_smoke import SmokeCoordinator
+        if type(coordinator) is SmokeCoordinator:
+            import finite_root_contract as rc
+            rc.smoke_scope(self.manifest)
+            _require(dispatch is not None and coordinator.enabled and not coordinator.local_failed and dispatch.enabled and dispatch.wire.transport is self,'smoke_transport_not_bound')
+            dispatch.guard.check();self.journal.check_stage(self.manifest,'tick');return dispatch,coordinator
         _require(dispatch is not None and coordinator is not None
                  and coordinator.enabled and coordinator.runner.config.enabled
                  and not coordinator.runner.local_failed and dispatch.enabled
@@ -97,7 +118,7 @@ class FinitePilotTransport:
         """Match the exact committed claim/uncertainty, never caller truth flags."""
         if method == 'POST':
             _require(path == '/v2/orders', 'forbidden_pilot_write_route')
-            NativePaperHTTP.validate_payload(body)
+            NativePaperHTTP.validate_payload(body,**({} if self.__execution_policy is None else dict(execution_policy=self.__execution_policy)))
             _require(body['symbol'] == 'NVDA', 'pilot_universe_mismatch')
             cid, kind, target = body['client_order_id'], 'submit', body['client_order_id']
         else:
@@ -133,10 +154,13 @@ class FinitePilotTransport:
             rows = db.execute('SELECT dirty,stopped,attention,stage FROM runner_control').fetchall()
             _require(len(rows) == 1 and rows[0][:3] == (1, 0, None)
                      and rows[0][3] in ('submit', 'exit', 'expire'), 'runner_write_control_refused')
-        with _read(runner.port.pipeline.database) as db:
+        from finite_execution_smoke import SmokeCoordinator
+        decision_path=runner.decision_path if type(runner) is SmokeCoordinator else runner.port.pipeline.database
+        with _read(decision_path) as db:
             _require(db.execute('SELECT stopped FROM demo_control').fetchall() == [(0,)]
                      and db.execute('SELECT 1 FROM demo_attention LIMIT 1').fetchone() is None,
                      'pipeline_write_control_refused')
+        if type(runner) is SmokeCoordinator:runner.final_write_check(method,path,body)
         return target
 
     def _open(self, opener, req, *args, **kwargs):
@@ -152,9 +176,18 @@ class FinitePilotTransport:
         return self._at_wire(lambda: opener.open(req, *args, **kwargs))
 
     def _at_wire(self, invoke):
+        _require(not self.__opened,'single_open_required');self.__opened=True
         dispatch, runner = self._bound()
         method, path, body = self.__pending
         if method == 'GET':
+            from finite_execution_smoke import SmokeCoordinator
+            if type(runner) is SmokeCoordinator:
+                from native_observation_collector import _route
+                if path!='/v2/assets/NVDA':_route(path)
+                _require(not path.startswith('/v2/stocks/') or path=='/v2/stocks/quotes/latest?symbols=NVDA&feed=iex','smoke_quote_route_only')
+            if self.manifest.root_binding is not None:
+                self.journal.reserve_broker_request(self.manifest,method,path)
+                self.journal.check_stage(self.manifest,'tick')
             return invoke()
         target = self._native_attempt(method, path, body, dispatch, runner)
         # Commits before yield and holds anchor controls over the final clock
@@ -168,6 +201,7 @@ class FinitePilotTransport:
                  'forbidden_method_or_reentry')
         _require(method != 'GET' or body is None, 'forbidden_body')
         self.__pending = (method, path, body)
+        self.__opened = False
         try:
             if self.__native:
                 return self.__transport.call(method, path, body)
@@ -182,6 +216,9 @@ class FiniteSourceTransport:
     """Every feed/original-HTML GET attempt consumes the anchored finite quota."""
     def __init__(self, *, manifest, journal, guard, test_only=False, transport_factory=None):
         contract.require_pilot_manifest(manifest)
+        if manifest.root_binding is not None:
+            import finite_root_contract as rc
+            _require(rc.APPROVED_ROOT.smoke is None,'smoke_source_forbidden')
         _require(type(test_only) is bool and (test_only or transport_factory is None),
                  'production_factory_override_forbidden')
         self.manifest, self.journal, self.guard = manifest, journal, guard
@@ -230,7 +267,12 @@ class RecoveryReadOnlyTransport:
         self.__order_scan = []
         self.__pending = None
         factory = NativePaperHTTP if transport_factory is None else transport_factory
-        self.__transport = factory(key, secret, enabled=True)
+        policy=None
+        if manifest.root_binding is not None:
+            import finite_root_contract as rc
+            if rc.APPROVED_ROOT.smoke is not None:policy=rc.smoke_execution_policy(manifest)
+        self.__execution_policy=policy
+        self.__transport = factory(key, secret, enabled=True,**({} if policy is None else dict(execution_policy=policy)))
         native = type(self.__transport) is NativePaperHTTP
         _require(test_only or native, 'reviewed_transport_required')
         if native:

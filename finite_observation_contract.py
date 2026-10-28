@@ -34,7 +34,7 @@ class ObservationGrant:
         require(type(self.max_cycles) is int and 1<=self.max_cycles<=40 and type(self.max_gets_per_cycle) is int and 1<=self.max_gets_per_cycle<=12 and type(self.max_gets) is int and 1<=self.max_gets<=480 and self.max_gets<=self.max_cycles*self.max_gets_per_cycle,'invalid_caps')
         require(type(self.cadence_ns) is int and self.cadence_ns>=65*NS,'invalid_cadence')
     def document(self):return asdict(self)
-APPROVED_OBSERVATION:ObservationGrant|None=ObservationGrant(**{'observation_id': 'observation-nvda-20261027T133600Z', 'starts_ns': 1793108160000000000, 'expires_ns': 1793111760000000000, 'seal_sha256': '4baf35d188353e7cb4ddcfbc37f9cd2951dddf1bd15489fc3b997db062046ba6', 'anchor_sha256': '9edd3afb37f832ffdaf791a4735b5a9ec25886eaa38084dcb039c267528dfda6', 'cohort_sha256': '327f3585c7c501bcc8890c98fc0c8d2efcc2f80da59a7517ece82967c3f1ea34', 'protected_sha256': 'ec23cf4b7a453d95014838b9a89f33b46eab1ee629a6b13cebdebd0eebb55169', 'runner_sha256': '7c7e6312a4fe7c00d9255d009ccaa3ade56820a1ea9c1ad2457e55b919b4401e', 'predecessor_sha256': '060ad011f16ac1d1f9482fbba234636ff4ccb917cd293f85f8185baffbe303c6', 'terminal_sha256': '6d5c6318a49ffb1e442ac5ff5a68e0a5c52999c7ef008ff7dc3b53e19fc7950f', 'allow_create_journal': True, 'max_cycles': 40, 'max_gets_per_cycle': 12, 'max_gets': 480, 'cadence_ns': 65000000000})
+APPROVED_OBSERVATION:ObservationGrant|None=None
 
 def approved(grant):
     require(type(grant) is ObservationGrant and grant is APPROVED_OBSERVATION,'observation_disabled')

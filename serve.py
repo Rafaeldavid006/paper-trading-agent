@@ -26,6 +26,8 @@ import finite_recovery_successor_contract as successor_contract
 from finite_recovery_successor_supervisor import SuccessorSupervisor
 import finite_observation_contract as observation_contract
 from finite_observation_supervisor import ObservationSupervisor
+import finite_root_contract as root_contract
+from finite_root_supervisor import RootSupervisor
 
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
@@ -197,6 +199,12 @@ def main():
         if successor_requested:
             successor_contract.require_successor_manifest(successor_contract.APPROVED_SUCCESSOR)
         finite_requested = _finite_requested()
+        root_requested=root_contract.APPROVED_ROOT is not None
+        if root_requested:
+            root_contract.require_root(root_contract.APPROVED_ROOT)
+            now=time.time_ns()
+            if type(now) is not int or now<=0:raise ValueError("invalid_root_clock")
+            root_requested=now<root_contract.APPROVED_ROOT.expires_ns
         observation_grant=observation_contract.APPROVED_OBSERVATION
         observation_requested=observation_grant is not None
         if observation_requested:
@@ -219,10 +227,11 @@ def main():
         return 1
     stop = threading.Event()
     children = []
-    finite_runtime = (ObservationSupervisor(external_stop=stop) if observation_requested else
+    finite_runtime = (RootSupervisor(external_stop=stop) if root_requested else
+                      ObservationSupervisor(external_stop=stop) if observation_requested else
                       SuccessorSupervisor(enabled=True) if successor_requested
                       else FinitePilotSupervisor(enabled=finite_requested))
-    runtime_requested = finite_requested or successor_requested or observation_requested
+    runtime_requested = finite_requested or successor_requested or observation_requested or root_requested
     finite_terminal = False
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
@@ -233,7 +242,7 @@ def main():
             return 0 if stop.is_set() else 1
         if stop.is_set():
             return 0
-        if REPORT_RECOVERY_STATE and not successor_requested and not admission_requested:
+        if REPORT_RECOVERY_STATE and not successor_requested and not admission_requested and not root_requested:
             if finite_requested or not _run_readonly_report(stop):
                 return 1
             if stop.is_set():
@@ -263,7 +272,7 @@ def main():
                     if session_requested and not stop.is_set():
                         if not _run_session_receipt(stop,'halt'):return 1
                         session_close_pending = True
-                    if (successor_requested or admission_requested or observation_requested) and finite_runtime.reaped and not stop.is_set():
+                    if (successor_requested or admission_requested or observation_requested or root_requested) and finite_runtime.reaped and not stop.is_set():
                         # Exactly one post-terminal read-only receipt check, not a
                         # recovery restart. A report failure never retries.
                         if not _run_readonly_report(stop):
@@ -277,7 +286,7 @@ def main():
         return 0
     finally:
         finite_runtime.close()
-        if observation_requested and not finite_runtime.reaped:
+        if (observation_requested or root_requested) and not finite_runtime.reaped:
             print(json.dumps(dict(mode='finite_observation_startup',reason='child_reaping_uncertain',order_permission='none',automatic_retry=False)),flush=True)
         for child in children:
             if child.poll() is None:
@@ -293,7 +302,7 @@ def main():
                     print(json.dumps(dict(mode='finite_paper_startup', reason='web_reap_pending',
                         order_permission='none', automatic_retry=False)), flush=True)
 
-        if observation_requested and not finite_runtime.reaped:return 1
+        if (observation_requested or root_requested) and not finite_runtime.reaped:return 1
 
 
 if __name__=='__main__':raise SystemExit(main())

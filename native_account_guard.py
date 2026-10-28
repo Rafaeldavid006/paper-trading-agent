@@ -506,7 +506,7 @@ class SharedAccountGuard:
             db.execute('UPDATE account_guard_binding SET high_ns=? WHERE id=1', (now_ns,))
         return count + 1
 
-    def reconcile_legacy(self, native_orders, missing_ids, *, now_ns, observed_ns):
+    def reconcile_legacy(self, native_orders, missing_ids, *, now_ns, observed_ns,execution_policy=None):
         """Validate native broker evidence without rewriting legacy history.
 
         Trusted adapter contract: missing_ids are CURRENT authenticated 404s for
@@ -529,7 +529,7 @@ class SharedAccountGuard:
             _require(missing == set(self.reserved_client_ids), 'legacy_missing_id_mismatch')
             parsed = {}
             for raw in native_orders:
-                order = parse_order(raw)
+                order = parse_order(raw,execution_policy=execution_policy)
                 _require(order.client_order_id not in parsed, 'duplicate_native_order')
                 _require(order.updated_ns <= observed_ns, 'future_legacy_order')
                 parsed[order.client_order_id] = (order, raw)
@@ -548,6 +548,7 @@ class SharedAccountGuard:
                     continue
                 _require(cid in parsed, 'legacy_submitted_order_missing')
                 order, raw = parsed[cid]
+                _require(order.extended_hours is False,'legacy_execution_policy_changed')
                 _require(order.status in TERMINAL and (order.id, order.symbol, order.side,
                          order.quantity, order.limit_price, order.status, order.filled) ==
                          (row['broker_id'], payload['symbol'], payload['side'], Decimal(payload['qty']),

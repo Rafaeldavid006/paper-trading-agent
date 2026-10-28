@@ -55,10 +55,15 @@ class FinitePilotSupervisor:
     """
 
     def __init__(self, *, enabled=False, popen=None, monotonic=None,
-                 emit=print, timer_factory=None, wall_time_ns=None):
+                 emit=print, timer_factory=None, wall_time_ns=None, root_index=None):
         if type(enabled) is not bool:
             raise ValueError('invalid_enable')
+        self._root_index=root_index
+        self._root=None
         self._approval = contract.APPROVED_PILOT
+        if root_index is not None:
+            import finite_root_contract as root_contract
+            self._approval=root_contract.child(root_index);self._root=root_contract.APPROVED_ROOT
         self._recovery = contract.APPROVED_RECOVERY
         self._inspection = contract.APPROVED_INSPECTION
         self._enabled = enabled and (
@@ -147,7 +152,15 @@ class FinitePilotSupervisor:
         return value
 
     def _scope_locked(self, stage, *, allow_future=False):
-        if (contract.APPROVED_PILOT is not self._approval
+        if self._root is not None:
+            try:
+                import finite_root_contract as root_contract
+                if root_contract.APPROVED_ROOT is not self._root:raise ValueError('root_changed')
+                root_contract.require_child(self._approval)
+            except Exception:
+                self._halt_locked('approval_changed');self._kill_locked();return None
+        expected_pilot=None if self._root is not None else self._approval
+        if (contract.APPROVED_PILOT is not expected_pilot
                 or contract.APPROVED_RECOVERY is not self._recovery
                 or contract.APPROVED_INSPECTION is not self._inspection):
             self._halt_locked('approval_changed'); self._kill_locked(); return None
@@ -253,7 +266,7 @@ class FinitePilotSupervisor:
                 self._halt_locked('clock_failed'); self._clear_child_locked(); return
             self._pending_initial = None
             self._initialized = True
-            self._next_due = {'source': now, 'tick': now}
+            self._next_due = ({'tick':now} if self._root is not None and self._root.smoke is not None else {'source': now, 'tick': now})
         elif stage in _INTERVALS:
             try:
                 # Worker anchor time follows process launch/import. Measuring
@@ -277,7 +290,7 @@ class FinitePilotSupervisor:
             return
         approval = self._approval_for(stage)
         remaining_scope = (approval.expires_ns - wall) / 1_000_000_000
-        admission = (approval.session_admission or approval.admission) if stage=='initialize' else None
+        admission = (approval.root_binding or approval.session_admission or approval.admission) if stage=='initialize' else None
         if (stage == 'initialize' and admission is not None
                 and wall < admission.expires_ns):
             # A fresh admission child cannot outlive its first-five-minute
@@ -298,7 +311,7 @@ class FinitePilotSupervisor:
             flag = '--initialize-proof-state' if stage == 'inspect' else '--' + stage
             path = str(Path(__file__).resolve().with_name(filename))
             self._child = self._popen(
-                [sys.executable, path, flag], stdin=subprocess.DEVNULL,
+                [sys.executable, path, flag]+([] if self._root_index is None else ['--root-child='+str(self._root_index)]), stdin=subprocess.DEVNULL,
                 stdout=None, stderr=subprocess.DEVNULL, shell=False, close_fds=True)
         except Exception:
             self._halt_locked('start_failed'); return
@@ -375,7 +388,7 @@ class FinitePilotSupervisor:
                     if self._pending_initial is not None:
                         self._launch_locked(self._pending_initial, now)
                     elif self._initialized:
-                        due = [stage for stage in ('source', 'tick') if now >= self._next_due[stage]]
+                        due = [stage for stage in ('source', 'tick') if stage in self._next_due and now >= self._next_due[stage]]
                         if due:
                             stage = min(due, key=lambda value: self._next_due[value])
                             self._launch_locked(stage, now)
