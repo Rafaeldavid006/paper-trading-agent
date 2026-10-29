@@ -102,10 +102,107 @@ _CODES = frozenset({
     'wrong_quote_feed',
 })
 
+# Metadata only: literal parser vocabulary, never provider text or authority.
+SCHEMA_FAILURE_CODES = frozenset((
+    'account_binding_mismatch',
+    'account_blocked_or_unknown',
+    'cancel_state_regression',
+    'collection_completeness_unknown',
+    'conflicting_same_timestamp',
+    'decimal_precision',
+    'duplicate_intent',
+    'duplicate_order',
+    'duplicate_position',
+    'empty_quote_size',
+    'execution_policy_not_authorized',
+    'execution_session_closed',
+    'execution_session_mode',
+    'execution_smoke_scope_required',
+    'external_symbol_order',
+    'fill_beyond_limit',
+    'filled_status_inconsistent',
+    'future_order',
+    'intent_account_mismatch',
+    'intent_order_mismatch',
+    'invalid_decimal_range',
+    'invalid_decimal_string',
+    'invalid_fill_quantity',
+    'invalid_identifier',
+    'invalid_limit_price',
+    'invalid_market_open',
+    'invalid_next_session',
+    'invalid_object',
+    'invalid_owned_intent',
+    'invalid_position_quantity',
+    'invalid_positions',
+    'invalid_quote_number',
+    'invalid_quote_spread',
+    'invalid_symbols',
+    'invalid_timestamp',
+    'missing_fill_price',
+    'missing_filled_timestamp',
+    'missing_owned_intents',
+    'order_event_timestamp_order',
+    'order_identity_mutated',
+    'order_regression',
+    'order_timestamp_order',
+    'orders_truncated_or_invalid',
+    'owned_order_missing',
+    'owned_order_still_working',
+    'ownership_or_available_mismatch',
+    'paper_origin_required',
+    'partial_status_inconsistent',
+    'premarket_context_required',
+    'quantity_precision',
+    'quote_universe_mismatch',
+    'response_context_mismatch',
+    'root_crosses_execution_session',
+    'session_calendar_clock',
+    'session_calendar_mismatch',
+    'session_calendar_missing',
+    'session_calendar_weekend',
+    'session_clock_invalid',
+    'session_context_authority_changed',
+    'session_context_calendar',
+    'session_context_clock_mismatch',
+    'session_context_clock_outside',
+    'session_context_close',
+    'session_context_mode',
+    'session_context_root',
+    'session_context_shape',
+    'session_context_time',
+    'stale_or_future',
+    'terminal_order_changed',
+    'terminal_status_inconsistent',
+    'unexpected_execution_context',
+    'unknown_feed',
+    'unknown_or_unsupported_order_status',
+    'unsupported_account',
+    'unsupported_order_asset',
+    'unsupported_order_policy',
+    'unsupported_order_structure',
+    'unsupported_position',
+    'working_full_fill_inconsistent',
+    'zero_fill_status_inconsistent',
+))
+SCHEMA_FAILURE_STAGES = frozenset((
+    'account', 'clock', 'calendar', 'orders', 'owned_lookup', 'quotes',
+    'positions_consistency', 'account_consistency', 'final_freshness', 'snapshot',
+    'outside_collector', 'unknown_stage',
+))
+
+def schema_failure_detail(code, stage):
+    return dict(
+        schema_code=code if type(code) is str and code in SCHEMA_FAILURE_CODES else 'unknown_schema',
+        schema_stage=stage if type(stage) is str and stage in SCHEMA_FAILURE_STAGES else 'unknown_stage')
+
+
 class CollectionRefused(SafetyError):
     """Only fixed local codes, never a provider message, URL or credential."""
-    def __init__(self, code):
-        self.code = code if code in _CODES else 'collection_failed'
+    def __init__(self, code, *, schema_code=None, schema_stage=None):
+        self.code = code if type(code) is str and code in _CODES else 'collection_failed'
+        detail = schema_failure_detail(schema_code, schema_stage) if self.code == 'native_schema_refused' else dict(schema_code='none', schema_stage='none')
+        self.schema_code, self.schema_stage = detail['schema_code'], detail['schema_stage']
         super().__init__(self.code)
 
 
@@ -459,6 +556,7 @@ class NativeObservationCollector:
         self._audit_rowid = None
         status = 'collection_failed'
         digest = None
+        schema_stage = 'unknown_stage'
         try:
             require(type(self.expected) is str and re.fullmatch(r'[0-9a-f]{64}', self.expected), 'invalid_expected_binding')
             _symbols(self.symbols)
@@ -472,16 +570,19 @@ class NativeObservationCollector:
             view = self._view()
             self._owned_count = len(view.client_ids)
             account, _ = self._get('/v2/account')
+            schema_stage = 'account'
             a = parse_account(account, expected_fingerprint=self.expected, origin=PAPER_ORIGIN)
             identity = account['id']  # private raw ID remains only in memory
             self._context(account, identity)
             clock, clock_received = self._get('/v2/clock')
             self._context(clock, identity)
+            schema_stage = 'clock'
             c = parse_clock(clock, now_ns=clock_received)
             if self.execution_policy is None:require(c.is_open, 'closed_session')
             day = _datetime_ceil(clock_received).astimezone(ZoneInfo('America/New_York')).date().isoformat()
             calendar, calendar_received = self._get('/v2/calendar?start=' + day + '&end=' + day)
             self._context(calendar, identity)
+            schema_stage = 'calendar'
             execution_session=None
             if self.execution_policy is None:
                 session = parse_session(clock, calendar, received_at=_datetime_ceil(calendar_received),now=_datetime_ceil(calendar_received))
@@ -501,6 +602,7 @@ class NativeObservationCollector:
                 require(type(page) is list and len(page) <= PAGE_SIZE, 'partial_or_invalid_order_page')
                 self._context(page, identity)
                 for raw in page:
+                    schema_stage = 'orders'
                     order = parse_order(raw,execution_policy=self.execution_policy)
                     require(order.updated_ns <= received, 'future_order')
                     require(order.id not in ids and order.client_order_id not in clients, 'duplicate_order_or_cursor')
@@ -520,6 +622,7 @@ class NativeObservationCollector:
                 # Independently query every durable ID, even absent from the scan.
                 raw, received = self._get('/v2/orders:by_client_order_id?client_order_id=' + cid)
                 self._context(raw, identity)
+                schema_stage = 'owned_lookup'
                 current = parse_order(raw,execution_policy=self.execution_policy)
                 require(current.client_order_id == cid and current.updated_ns <= received, 'owned_lookup_mismatch')
                 require(cid in by_client, 'owned_order_missing_from_scan')
@@ -533,16 +636,20 @@ class NativeObservationCollector:
             for row in quotes_raw.get('quotes', {}).values() if type(quotes_raw.get('quotes')) is dict else ():
                 require(type(row) is dict and row.get('feed', 'iex') == 'iex', 'wrong_quote_feed')
             self._context(quotes_raw, identity)
+            schema_stage = 'quotes'
             quotes = parse_latest_quotes(quotes_raw, symbols=self.symbols, feed='iex', now_ns=quote_received)
             positions_after, _ = self._get('/v2/positions')
             self._context(positions_after, identity)
+            schema_stage = 'positions_consistency'
             require(parse_positions(positions) == parse_positions(positions_after), 'positions_changed_during_collection')
             account_after, _ = self._get('/v2/account')
             self._context(account_after, identity)
+            schema_stage = 'account_consistency'
             a_after = parse_account(account_after, expected_fingerprint=self.expected, origin=PAPER_ORIGIN)
             require(a == a_after and account['id'] == account_after['id'], 'account_changed_during_collection')
             require(self._view() == view, 'owned_ledger_changed_during_collection')
             observed = self._check_time()
+            schema_stage = 'final_freshness'
             fresh(c.timestamp_ns, observed)
             require(observed < c.next_close_ns, 'session_ended_during_collection')
             for q in quotes:
@@ -552,6 +659,7 @@ class NativeObservationCollector:
                           response_account_fingerprint=a.fingerprint, observed_ns=observed,
                           collection_complete=True, quotes=quotes_raw, quote_symbols=self.symbols, feed='iex')
             if execution_session is not None:native['execution_session']=execution_session.document()
+            schema_stage = 'snapshot'
             snapshot = parse_snapshot(account, clock, positions, orders, origin=PAPER_ORIGIN,
                                       expected_fingerprint=self.expected, response_account_fingerprint=a.fingerprint,
                                       observed_ns=observed, now_ns=observed, collection_complete=True,execution_policy=self.execution_policy,execution_session=None if execution_session is None else execution_session.document())
@@ -566,6 +674,7 @@ class NativeObservationCollector:
             self._audit_rowid = self._budget.audit(at_ns=observed, status=status, attempts=self._requests,
                                owned_count=self._owned_count, order_count=self._order_count, digest=digest)
             accepted_ns = self._check_time()
+            schema_stage = 'final_freshness'
             fresh(observed, accepted_ns)
             fresh(c.timestamp_ns, accepted_ns)
             for q in quotes:
@@ -575,9 +684,10 @@ class NativeObservationCollector:
                 from execution_session_policy import validate_execution
                 validate_execution(snapshot,accepted_ns,self.execution_policy)
             return result
-        except SchemaError:
+        except SchemaError as exc:
             status = 'native_schema_refused'
-            raise CollectionRefused(status) from None
+            code = exc.args[0] if type(exc) is SchemaError and len(exc.args) == 1 else None
+            raise CollectionRefused(status, **schema_failure_detail(code, schema_stage)) from None
         except CollectionRefused as exc:
             status = exc.code
             raise

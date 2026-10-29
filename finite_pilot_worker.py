@@ -275,7 +275,7 @@ ERROR_CODES = frozenset((
 
 
 def failure(phase, exc=None, *, code=None):
-    """Never stringify an exception or copy arbitrary exception attributes."""
+    """Only literal allowlisted detail escapes; never stringify an exception."""
     if code is None:
         if type(exc) is CollectionRefused:
             candidate = exc.code
@@ -292,7 +292,17 @@ def failure(phase, exc=None, *, code=None):
         else:
             candidate = None
         code = candidate if type(candidate) is str and candidate in ERROR_CODES else 'unclassified_failure'
-    return public('manual_handoff', 'pilot_stage_refused', error_stage=phase, error_code=code)
+    result = public('manual_handoff', 'pilot_stage_refused', error_stage=phase, error_code=code)
+    if code == 'native_schema_refused':
+        from native_observation_collector import schema_failure_detail
+        if type(exc) is CollectionRefused:
+            result.update(schema_failure_detail(exc.schema_code, exc.schema_stage))
+        elif type(exc) is SchemaError:
+            literal = exc.args[0] if len(exc.args) == 1 else None
+            result.update(schema_failure_detail(literal, 'outside_collector'))
+        else:
+            result.update(schema_failure_detail(None, None))
+    return result
 
 
 def require(ok, code):

@@ -114,3 +114,6 @@ def smoke_execution_policy(manifest):
     if scope.session_mode=='regular':return None
     from execution_session_policy import policy_for_root
     return policy_for_root()
+
+# Recovery development artifact: no historical or new trading activation.
+APPROVED_ROOT = None

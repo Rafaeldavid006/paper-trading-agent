@@ -369,6 +369,8 @@ def report(*,paths=None,test_only=False,expected=None):
                 result.update(_successor_report(db,runner,enrolled))
                 result.update(_admission_report(db,runner))
                 result.update(_session_report(db,runner,dbs['lifecycle'],bundle.binding))
+                from prepared_recovery_report import project
+                result.update(project(bundle,db))
                 bundle.verify();journal._binding_row(db)
                 _require(_stamp(bundle.paths)==before)
             _require(0<=time.monotonic()-started<MAX_SECONDS)

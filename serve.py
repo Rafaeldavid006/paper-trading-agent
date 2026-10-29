@@ -28,6 +28,7 @@ import finite_observation_contract as observation_contract
 from finite_observation_supervisor import ObservationSupervisor
 import finite_root_contract as root_contract
 from finite_root_supervisor import RootSupervisor
+from prepared_recovery_supervisor import PreparedRecoverySupervisor
 
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
@@ -191,10 +192,13 @@ def _run_session_receipt(stop, action):
 
 
 def main():
+    stop = threading.Event()
     try:
         _, port = validate_environment(os.environ)
         if INSPECT_EXISTING_AUDIT_ONLY is not True:
             raise ValueError('inspection_service_required')
+        prepared_runtime = PreparedRecoverySupervisor(external_stop=stop)
+        prepared_requested = prepared_runtime.requested
         successor_requested = successor_contract.APPROVED_SUCCESSOR is not None
         if successor_requested:
             successor_contract.require_successor_manifest(successor_contract.APPROVED_SUCCESSOR)
@@ -221,17 +225,21 @@ def main():
                              and finite_contract.APPROVED_PILOT.session_admission is not None)
         if successor_requested and finite_requested:
             raise ValueError('mixed_successor_scope')
+        if prepared_requested and any(x is not None for x in (
+                finite_contract.APPROVED_PILOT,finite_contract.APPROVED_RECOVERY,finite_contract.APPROVED_INSPECTION,
+                successor_contract.APPROVED_SUCCESSOR,observation_contract.APPROVED_OBSERVATION,root_contract.APPROVED_ROOT)):
+            raise ValueError('mixed_prepared_scope')
     except (ValueError, TypeError):
         print(json.dumps(dict(mode='finite_paper_startup', reason='startup_configuration_refused',
             order_permission='none', automatic_retry=False)), file=sys.stderr, flush=True)
         return 1
-    stop = threading.Event()
     children = []
-    finite_runtime = (RootSupervisor(external_stop=stop) if root_requested else
+    finite_runtime = (prepared_runtime if prepared_requested else
+                      RootSupervisor(external_stop=stop) if root_requested else
                       ObservationSupervisor(external_stop=stop) if observation_requested else
                       SuccessorSupervisor(enabled=True) if successor_requested
                       else FinitePilotSupervisor(enabled=finite_requested))
-    runtime_requested = finite_requested or successor_requested or observation_requested or root_requested
+    runtime_requested = prepared_requested or finite_requested or successor_requested or observation_requested or root_requested
     finite_terminal = False
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
@@ -264,7 +272,9 @@ def main():
                 if finite_runtime.completed or finite_runtime.halted:
                     finite_terminal = True
                     finite_runtime.close()  # Bounded reap; never schedule again.
-                    if observation_requested:
+                    if prepared_requested:
+                        print(json.dumps(dict(mode='prepared_recovery_startup',reason='worker_finished' if finite_runtime.completed else 'worker_halted',order_permission='none',automatic_retry=False,child_reaped=finite_runtime.reaped,broker_flatness_verified=False)),flush=True)
+                    elif observation_requested:
                         print(json.dumps(dict(mode='finite_observation_startup',reason='observation_finished' if finite_runtime.completed else 'observation_halted',order_permission='none',automatic_retry=False,child_reaped=finite_runtime.reaped)),flush=True)
                     else:_finite_terminal(finite_runtime)
                     if not finite_runtime.reaped:
@@ -272,7 +282,7 @@ def main():
                     if session_requested and not stop.is_set():
                         if not _run_session_receipt(stop,'halt'):return 1
                         session_close_pending = True
-                    if (successor_requested or admission_requested or observation_requested or root_requested) and finite_runtime.reaped and not stop.is_set():
+                    if (prepared_requested or successor_requested or admission_requested or observation_requested or root_requested) and finite_runtime.reaped and not stop.is_set():
                         # Exactly one post-terminal read-only receipt check, not a
                         # recovery restart. A report failure never retries.
                         if not _run_readonly_report(stop):
@@ -286,7 +296,7 @@ def main():
         return 0
     finally:
         finite_runtime.close()
-        if (observation_requested or root_requested) and not finite_runtime.reaped:
+        if (prepared_requested or observation_requested or root_requested) and not finite_runtime.reaped:
             print(json.dumps(dict(mode='finite_observation_startup',reason='child_reaping_uncertain',order_permission='none',automatic_retry=False)),flush=True)
         for child in children:
             if child.poll() is None:
@@ -302,7 +312,7 @@ def main():
                     print(json.dumps(dict(mode='finite_paper_startup', reason='web_reap_pending',
                         order_permission='none', automatic_retry=False)), flush=True)
 
-        if (observation_requested or root_requested) and not finite_runtime.reaped:return 1
+        if (prepared_requested or observation_requested or root_requested) and not finite_runtime.reaped:return 1
 
 
 if __name__=='__main__':raise SystemExit(main())
