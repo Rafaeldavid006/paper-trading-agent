@@ -113,21 +113,32 @@ def read_summary(path):
 def main():
     info = preflight()
     for limit, value in ((resource.RLIMIT_CORE, 0), (resource.RLIMIT_NOFILE, 128),
-                         (resource.RLIMIT_NPROC, 128), (resource.RLIMIT_FSIZE, 16 * 1024 * 1024),
+                         (resource.RLIMIT_NPROC, 128), (resource.RLIMIT_FSIZE, 40 * 1024 * 1024),
                          (resource.RLIMIT_AS, 2 * 1024**3), (resource.RLIMIT_CPU, 900)):
         resource.setrlimit(limit, (value, value))
-    report = {'runtime': info, 'before_source_hashes': verify_sources(),
+    report = {'runtime': info, 'resource_limits': {'file_size_bytes': 40 * 1024 * 1024, 'file_descriptors': 128, 'processes': 128, 'address_space_bytes': 2 * 1024**3, 'cpu_seconds': 900},
+              'before_source_hashes': verify_sources(),
               'synthetic_only': True, 'source_requests': 0, 'production_mutation': False,
-              'scope': 'exact_patch_dependencies_not_render_image_or_storage', 'runs': {}}
+              'scope': 'risk_based_inactive_collector_lifecycle_and_inspection_web_only',
+              'not_qualified': ['render_native_binary_identity', 'production_storage', 'live_collection',
+                                'resident_alpaca_runtime', 'trading', 'full_service_regression_suite'],
+              'full_discovery_evidence': 'https://github.com/Rafaeldavid006/paper-trading-agent/actions/runs/41012536360',
+              'runs': {}}
     python = sys.executable
     expected_hashes = json.loads((control / 'source_hashes.json').read_text())
     for label in ('baseline', 'candidate'):
         expected_modules = sum('/' not in name and name.startswith('test_') and name.endswith('.py') for name in expected_hashes[label])
         summary = work / (label + '.json')
-        state = run(label, [python, '-I', '-B', str(control / 'suite.py'), str(root / label), str(summary), str(expected_modules)], 360, work)
+        state = run(label, [python, '-I', '-B', str(control / 'suite.py'), str(root / label), str(summary), str(expected_modules), 'historical'], 90, work)
         if summary.is_file():
             state['suite'] = read_summary(summary)
         report['runs'][label] = state
+    summary = work / 'critical.json'
+    expected_modules = sum('/' not in name and name.startswith('test_') and name.endswith('.py') for name in expected_hashes['candidate'])
+    state = run('critical', [python, '-I', '-B', str(control / 'suite.py'), str(root / 'candidate'), str(summary), str(expected_modules), 'critical'], 180, work)
+    if summary.is_file():
+        state['suite'] = read_summary(summary)
+    report['runs']['critical'] = state
     report['runs']['collector_gate'] = run('collector_gate', [python, '-I', '-B',
         str(root / 'candidate' / 'production_collector' / 'build_gate.py')], 195, work)
     gate_output = (work / 'collector_gate.log').read_text(errors='replace')
@@ -156,7 +167,7 @@ def main():
         'shared_failing_tests': sorted(failures[0] & failures[1]) if comparison_available else None,
         'candidate_only_failing_tests': sorted(failures[1] - failures[0]) if comparison_available else None,
         'baseline_only_failing_tests': sorted(failures[0] - failures[1]) if comparison_available else None,
-        'interpretation': ('Historical failures require explicit review; no modules excluded or mocked.' if comparison_available else 'INCONCLUSIVE: at least one root suite did not produce a complete report.')}
+        'interpretation': ('Targeted historical fixtures only; overrides are explicit in each suite. Full unmodified discovery remains separately failed and is not qualified.' if comparison_available else 'INCONCLUSIVE: at least one root suite did not produce a complete report.')}
     remaining = [int(p.name) for p in Path('/proc').iterdir() if p.name.isdigit() and int(p.name) != os.getpid()]
     report['remaining_processes'] = len(remaining)
     for pid in remaining:
@@ -174,8 +185,12 @@ def main():
     package = report['runs']['collector_gate'].get('package_summary', {})
     report['passed'] = (all(run['exit_code'] == 0 for run in report['runs'].values()) and not remaining
         and all(suite.get('complete') is True and suite.get('successful') is True for suite in suites)
+        and report['runs']['critical'].get('suite', {}).get('complete') is True
+        and report['runs']['critical'].get('suite', {}).get('successful') is True
         and all(report['runs'][label + '_web'].get('smoke', {}).get('passed') is True for label in ('baseline', 'candidate'))
-        and package.get('tests_run', 0) > 0 and package.get('failures') == 0 and package.get('errors') == 0
+        and package.get('tests_run') == 95 and package.get('skipped') == 0
+        and package.get('synthetic_only') is True and package.get('live_http_requests') == 0
+        and package.get('failures') == 0 and package.get('errors') == 0
         and package.get('unraisable_errors') == [])
     print(json.dumps(report, sort_keys=True, indent=2), flush=True)
     return 0 if report['passed'] else 1

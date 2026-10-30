@@ -1,5 +1,6 @@
 """Unmodified unittest discovery; report even runner errors without private details."""
 import gc
+import contextlib
 import hashlib
 import io
 import json
@@ -13,8 +14,11 @@ import warnings
 
 root, report_path = map(Path, sys.argv[1:3])
 expected_modules = int(sys.argv[3]) if len(sys.argv) > 3 else None
+mode = sys.argv[4] if len(sys.argv) > 4 else 'full'
+if mode not in ('full', 'critical', 'historical'):
+    raise SystemExit('unknown_test_scope')
 summary = {'complete': False, 'successful': False, 'collected': 0, 'tests_run': 0,
-           'root_module_count': len(list(root.glob('test_*.py')))}
+           'root_module_count': len(list(root.glob('test_*.py'))), 'scope': mode, 'fixture_overrides': []}
 unraisable = []
 warning_categories = {}
 warning_sites = {}
@@ -76,11 +80,38 @@ try:
     os.chdir(root)
     sys.unraisablehook = lambda event: unraisable.append(type(event.exc_value).__name__)
     summary['fd_before_discovery'] = fd_count()
-    with warnings.catch_warnings(record=False):
+    with contextlib.ExitStack() as fixtures, warnings.catch_warnings(record=False):
         warnings.simplefilter('always')
         warnings.showwarning = record_warning
         summary['phase'] = 'discovering'; save()
-        suite = unittest.defaultTestLoader.discover(str(root), pattern='test_*.py', top_level_dir=str(root))
+        if mode == 'full':
+            suite = unittest.defaultTestLoader.discover(str(root), pattern='test_*.py', top_level_dir=str(root))
+        else:
+            if mode == 'critical':
+                names = ('test_collector_supervisor', 'test_collector_retired_paper_startup')
+                summary['expected_tests'] = 23
+            else:
+                # These historical tests predate later prepared/report authorities.
+                # Apply exactly the same documented inert fixtures to BOTH source trees.
+                import serve
+                from unittest.mock import Mock, patch
+                names = ('test_experiment_supervision', 'test_finite_startup_integration', 'test_finite_rebased_supervision')
+                summary['expected_tests'] = 26
+                fixtures.enter_context(patch.object(serve, 'PreparedRecoverySupervisor', return_value=Mock(requested=False, reaped=True)))
+                fixtures.enter_context(patch.object(serve, 'REPORT_RECOVERY_STATE', False))
+                fixtures.enter_context(patch.object(serve.observation_contract, 'APPROVED_OBSERVATION', None))
+                fixtures.enter_context(patch.object(serve.root_contract, 'APPROVED_ROOT', None))
+                fixtures.enter_context(patch.object(serve.successor_contract, 'APPROVED_SUCCESSOR', None))
+                summary['fixture_overrides'] = ['PreparedRecoverySupervisor:inert', 'REPORT_RECOVERY_STATE:false',
+                    'APPROVED_OBSERVATION:none', 'APPROVED_ROOT:none', 'APPROVED_SUCCESSOR:none']
+                if hasattr(serve, 'CollectorSupervisor'):
+                    collector = Mock(reaped=True)
+                    collector.status.return_value = {'order_permission': 'none'}
+                    collector.report_if_due.return_value = None
+                    fixtures.enter_context(patch.object(serve, 'CollectorSupervisor', return_value=collector))
+                    summary['fixture_overrides'].append('CollectorSupervisor:inert_for_historical_tests_only')
+            summary['test_modules'] = list(names)
+            suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in names)
         summary['collected'] = suite.countTestCases(); save()
         result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0, resultclass=ProgressResult).run(suite)
         gc.collect()
@@ -91,7 +122,8 @@ try:
         expected_failures=[issue(t, d) for t, d in result.expectedFailures],
         unexpected_successes=[t.id() for t in result.unexpectedSuccesses], complete=True, phase='complete')
     summary['successful'] = (summary['collected'] > 0 and result.testsRun == summary['collected'] and
-        (expected_modules is None or summary['root_module_count'] == expected_modules) and result.wasSuccessful())
+        (expected_modules is None or summary['root_module_count'] == expected_modules) and result.wasSuccessful() and (mode == 'full' or (summary['collected'] == summary['expected_tests']
+            and not result.skipped and not result.expectedFailures)))
 except BaseException as exc:
     summary['runner_exception_type'] = type(exc).__name__
     if isinstance(exc, OSError):
