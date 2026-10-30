@@ -1,0 +1,22 @@
+[
+  {
+    "bundled_path": "direct_adapter.py",
+    "sha256": "87b216e74424b9a751b5e441fb458af3f56c827f79db42743e125a8575f1d37c"
+  },
+  {
+    "bundled_path": "upstream/scheduler/bounded_scheduler.py",
+    "sha256": "93653d14ec21eb7362cd2aeddc5a5817d223d135d725d2211b5d3a57f9e2a910"
+  },
+  {
+    "bundled_path": "upstream/storage/durable_store.py",
+    "sha256": "d4caf0e6b83c7ffee89bc2175529bd10955d331ce9b5ab6667fc0b4c02ba8f8c"
+  },
+  {
+    "bundled_path": "core_v2/core.py",
+    "sha256": "0e9eec592b2f81b7ec8a92d3e9246aac9503e628293e359e68f1c101bed1f5f2"
+  },
+  {
+    "bundled_path": "modular_ingestion/core.py",
+    "sha256": "6d3b9bcac0a0bc18c008e9bb355a07c51ddd5e335be1d6dddf6ad5b80473b85d"
+  }
+]

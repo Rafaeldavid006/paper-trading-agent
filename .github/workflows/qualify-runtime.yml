@@ -1,0 +1,48 @@
+name: Offline exact-runtime qualification
+on:
+  push:
+    branches: ['qualification/cpython-3.14.8-20261030']
+permissions:
+  contents: read
+concurrency:
+  group: qualification-cpython-3.14.8-20261030
+  cancel-in-progress: false
+jobs:
+  qualify:
+    if: github.event_name == 'push' && github.event.repository.private == false && github.ref == 'refs/heads/qualification/cpython-3.14.8-20261030'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Read qualification source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: source
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Read exact baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: baseline
+          ref: f332cb2a0b48e78f1842f7a97fc07f3c83d67a27
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Official exact CPython
+        id: python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.14.8'
+          architecture: x64
+          check-latest: false
+      - name: Install only pinned service dependencies from PyPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple -r source/.qualification/requirements.txt
+          python -m pip check
+      - name: Qualify in no-uplink namespace, without credentials
+        shell: bash
+        env:
+          EXACT_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          sudo -n /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin "$EXACT_PYTHON" -I -B source/.qualification/launch.py "$EXACT_PYTHON" "$GITHUB_WORKSPACE/baseline" "$GITHUB_WORKSPACE/source"
