@@ -29,6 +29,7 @@ from finite_observation_supervisor import ObservationSupervisor
 import finite_root_contract as root_contract
 from finite_root_supervisor import RootSupervisor
 from prepared_recovery_supervisor import PreparedRecoverySupervisor
+from collector_supervisor import CollectorSupervisor
 
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
@@ -234,6 +235,7 @@ def main():
             order_permission='none', automatic_retry=False)), file=sys.stderr, flush=True)
         return 1
     children = []
+    collector_runtime = CollectorSupervisor()
     finite_runtime = (prepared_runtime if prepared_requested else
                       RootSupervisor(external_stop=stop) if root_requested else
                       ObservationSupervisor(external_stop=stop) if observation_requested else
@@ -265,8 +267,14 @@ def main():
         # Likewise never repeat the consumed Oct23 GET diagnostic or old loops.
         if runtime_requested and not stop.is_set():
             finite_runtime.start()
+        if not stop.is_set():
+            collector_runtime.start()
         session_close_pending = False
         while not stop.wait(.5):
+            collector_runtime.poll()
+            collector_status = collector_runtime.report_if_due()
+            if collector_status is not None:
+                collector_runtime.emit_report(collector_status)
             if runtime_requested and not finite_terminal:
                 finite_runtime.poll()
                 if finite_runtime.completed or finite_runtime.halted:
@@ -295,12 +303,16 @@ def main():
                 return 1
         return 0
     finally:
-        finite_runtime.close()
-        if (prepared_requested or observation_requested or root_requested) and not finite_runtime.reaped:
-            print(json.dumps(dict(mode='finite_observation_startup',reason='child_reaping_uncertain',order_permission='none',automatic_retry=False)),flush=True)
+        # Signal independent owner and web before bounded existing finite cleanup.
+        collector_runtime.begin_stop()
         for child in children:
             if child.poll() is None:
                 child.terminate()
+        finite_runtime.close()
+        collector_runtime.close()
+        collector_runtime.emit_report(collector_runtime.status())
+        if (prepared_requested or observation_requested or root_requested) and not finite_runtime.reaped:
+            print(json.dumps(dict(mode='finite_observation_startup',reason='child_reaping_uncertain',order_permission='none',automatic_retry=False)),flush=True)
         for child in children:
             try:
                 child.wait(timeout=10)
@@ -312,6 +324,7 @@ def main():
                     print(json.dumps(dict(mode='finite_paper_startup', reason='web_reap_pending',
                         order_permission='none', automatic_retry=False)), flush=True)
 
+        if not collector_runtime.reaped:return 1
         if (prepared_requested or observation_requested or root_requested) and not finite_runtime.reaped:return 1
 
 
