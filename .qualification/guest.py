@@ -98,6 +98,18 @@ def run(label, args, seconds, cwd):
     return {'exit_code': code, 'timeout': timed_out, 'output_bytes': len(body),
             'output_sha256': hashlib.sha256(body).hexdigest()}
 
+def read_summary(path):
+    if path.is_symlink():
+        return {'complete': False, 'successful': False, 'summary_state': 'nonregular_refused'}
+    try:
+        body = path.read_bytes()
+        value = json.loads(body)
+        if not isinstance(value, dict):
+            raise ValueError('object_required')
+        return value
+    except (OSError, ValueError):
+        return {'complete': False, 'successful': False, 'summary_state': 'unreadable_or_incomplete'}
+
 def main():
     info = preflight()
     for limit, value in ((resource.RLIMIT_CORE, 0), (resource.RLIMIT_NOFILE, 128),
@@ -114,23 +126,37 @@ def main():
         summary = work / (label + '.json')
         state = run(label, [python, '-I', '-B', str(control / 'suite.py'), str(root / label), str(summary), str(expected_modules)], 360, work)
         if summary.is_file():
-            state['suite'] = json.loads(summary.read_text())
+            state['suite'] = read_summary(summary)
         report['runs'][label] = state
     report['runs']['collector_gate'] = run('collector_gate', [python, '-I', '-B',
         str(root / 'candidate' / 'production_collector' / 'build_gate.py')], 195, work)
+    gate_output = (work / 'collector_gate.log').read_text(errors='replace')
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(gate_output):
+        if char != '{':
+            continue
+        try:
+            value, _ = decoder.raw_decode(gate_output[index:])
+        except ValueError:
+            continue
+        if isinstance(value, dict) and 'tests_run' in value and 'unraisable_errors' in value:
+            keys = ('tests_run', 'failures', 'errors', 'skipped', 'unraisable_errors', 'live_http_requests', 'synthetic_only')
+            report['runs']['collector_gate']['package_summary'] = {key: value[key] for key in keys if key in value}
     for label in ('baseline', 'candidate'):
         summary = work / (label + '_web.json')
         state = run(label + '_web', [python, '-I', '-B', str(control / 'smoke.py'), str(root / label), str(summary)], 30, work)
         if summary.is_file():
-            state['smoke'] = json.loads(summary.read_text())
+            state['smoke'] = read_summary(summary)
         report['runs'][label + '_web'] = state
     report['after_source_hashes'] = verify_sources()
     suites = [report['runs'][label].get('suite', {}) for label in ('baseline', 'candidate')]
     failures = [{item['test'] for kind in ('failures', 'errors') for item in suite.get(kind, [])} for suite in suites]
-    report['baseline_candidate_comparison'] = {'shared_failing_tests': sorted(failures[0] & failures[1]),
-        'candidate_only_failing_tests': sorted(failures[1] - failures[0]),
-        'baseline_only_failing_tests': sorted(failures[0] - failures[1]),
-        'interpretation': 'Historical failures require explicit review; no modules excluded or mocked by this runner.'}
+    comparison_available = all(suite.get('complete') is True for suite in suites)
+    report['baseline_candidate_comparison'] = {'comparison_available': comparison_available,
+        'shared_failing_tests': sorted(failures[0] & failures[1]) if comparison_available else None,
+        'candidate_only_failing_tests': sorted(failures[1] - failures[0]) if comparison_available else None,
+        'baseline_only_failing_tests': sorted(failures[0] - failures[1]) if comparison_available else None,
+        'interpretation': ('Historical failures require explicit review; no modules excluded or mocked.' if comparison_available else 'INCONCLUSIVE: at least one root suite did not produce a complete report.')}
     remaining = [int(p.name) for p in Path('/proc').iterdir() if p.name.isdigit() and int(p.name) != os.getpid()]
     report['remaining_processes'] = len(remaining)
     for pid in remaining:
@@ -145,7 +171,12 @@ def main():
                 break
         except ChildProcessError:
             break
-    report['passed'] = all(run['exit_code'] == 0 for run in report['runs'].values()) and not remaining
+    package = report['runs']['collector_gate'].get('package_summary', {})
+    report['passed'] = (all(run['exit_code'] == 0 for run in report['runs'].values()) and not remaining
+        and all(suite.get('complete') is True and suite.get('successful') is True for suite in suites)
+        and all(report['runs'][label + '_web'].get('smoke', {}).get('passed') is True for label in ('baseline', 'candidate'))
+        and package.get('tests_run', 0) > 0 and package.get('failures') == 0 and package.get('errors') == 0
+        and package.get('unraisable_errors') == [])
     print(json.dumps(report, sort_keys=True, indent=2), flush=True)
     return 0 if report['passed'] else 1
 
