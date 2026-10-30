@@ -167,7 +167,7 @@ def approved_leases(value):
 
 def stable_identity(value):
     require_release(value)
-    return {"profile_schema": 1, "root": value.root, "collector_id": value.collector_id,
+    return {"profile_schema": 2, "storage_profile": "render_single_service_cooperating_group_v2", "storage_schema": 2, "root": value.root, "collector_id": value.collector_id,
             "enrollment_id": value.enrollment_id, "source_id": "ecb_daily_reference",
             "source_url": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml",
             "live_slot_grace": LIVE_SLOT_GRACE, "required_python": list(REQUIRED_PYTHON),

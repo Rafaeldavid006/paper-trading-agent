@@ -9,6 +9,39 @@ markers. It does not execute trading orders or invoke model APIs. Process/state
 separation is not independent infrastructure, resource reservation, or a security
 boundary against a malicious administrator.
 
+This prospective inactive payload restores fixed owner supervision but ships no
+activation manifest. Its owner therefore exits disabled before storage or source
+access. The read-only survey remains available for separate review; it is not
+automatically run and is never an enrollment fallback. Supplying enrollment or
+collect deployment grants remains a separately reviewed action.
+
+## Storage contract
+
+Fresh enrollment uses storage schema 2 and a versioned evidence-store adapter;
+there is no automatic migration, reset, repair or adoption of prior storage.
+The fixed Render mount profile accepts only the reviewed non-owned `02775`,
+matching-runtime-group, read-write ext4 mount. This relies on cooperating code
+within one service, not protection from hostile or concurrent manual writers.
+Render restricts a disk to one service instance, but authorized SSH sessions can
+still write inside it. The shared mount is never chmodded or chowned. Collector
+directories remain runtime-owned `0700` or inherited `02700`; regular files are
+private, single-link and nofollow checked.
+
+An immutable enrollment receipt binds the original manifest, code/profile,
+nonce and file cohort. A fresh process can accept only a coherent device-number
+remap preserving the original inodes, metadata and markers across the complete
+cohort. Original records are retained, not rewritten to match the new device.
+During a process lifetime, full current physical identities are pinned and any
+observed replacement refuses without repinning. Reopens use explicit non-creating
+SQLite modes; only approved fresh enrollment can create database files. The
+evidence adapter owns its new schema and cohort table while preserving the
+vendored record APIs and checks.
+
+Descriptor checks do not turn pathname-based SQLite/WAL access into an atomic
+hostile-filesystem sandbox. A coherent whole-cohort restore can replay prior
+quota state; detecting that requires an external monotonic authority not provided
+here. Such restoration requires separate reconciliation, never automatic resume.
+
 ## Qualification
 
 Run the package suite from this directory with `python run_checks.py`.
@@ -43,7 +76,7 @@ response caps are not billing or network-wire caps. Failed/uncertain captures
 pause or fence instead of replaying.
 
 Actual runtime acceptance requires the correct commit/runtime, readable sanitized
-status/receipt logs, stable persistent identities across redeploy/restart, first
+status/receipt logs, verified cohort continuity across redeploy/restart, first
 confirmed budgeted capture, next daily capture in the same ledger, and restart
 without quota reset or replay. Green web health alone proves none of these.
 

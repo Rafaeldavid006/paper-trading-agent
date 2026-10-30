@@ -34,7 +34,7 @@ class Result:
 
 
 def collect(mode, *, stop, deadline_mono, wall=wall_now, mono=time.monotonic,
-            popen=subprocess.Popen, live_release=None):
+            popen=subprocess.Popen, live_release=None, before_spawn=None):
     if mode == "live":
         from production_release import require_collection_release
         require_collection_release(live_release)
@@ -51,6 +51,12 @@ def collect(mode, *, stop, deadline_mono, wall=wall_now, mono=time.monotonic,
     exit_code = None
     interrupted = None
     try:
+        if stop.is_set():
+            return Result(None, b"", wall(), mono(), True, "cancelled_before_spawn", None, None, 0)
+        if mono() >= deadline_mono:
+            return Result(None, b"", wall(), mono(), True, "deadline_before_spawn", None, None, 0)
+        if before_spawn is not None:
+            before_spawn()
         if stop.is_set():
             return Result(None, b"", wall(), mono(), True, "cancelled_before_spawn", None, None, 0)
         if mono() >= deadline_mono:

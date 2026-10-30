@@ -155,7 +155,7 @@ class SurveyTests(unittest.TestCase):
             with patch.object(survey.os, 'set_blocking'), patch.object(survey.os, 'write', side_effect=effect):
                 self.assertEqual(survey.emit({'survey_complete': True}, 0), 70)
 
-    def test_supervisor_only_launches_survey_with_empty_environment(self):
+    def test_supervisor_restores_fixed_owner_with_empty_environment(self):
         child = Mock()
         child.stdout.fileno.return_value = 10
         with patch.object(supervisor.subprocess, 'Popen', return_value=child) as spawn, patch.object(supervisor.os, 'set_blocking'):
@@ -163,12 +163,12 @@ class SurveyTests(unittest.TestCase):
             s.start()
             s.start()
         args = spawn.call_args.args[0]
-        self.assertEqual(Path(args[3]).name, 'collector_storage_survey.py')
-        self.assertNotIn('production_collector', args[3])
+        self.assertEqual(Path(args[3]).name, 'collector_owner.py')
+        self.assertEqual(Path(args[3]).parent.name, 'production_collector')
         self.assertEqual(args[1:3], ['-I', '-S'])
         self.assertEqual(spawn.call_args.kwargs['env'], {})
         self.assertEqual(spawn.call_count, 1)
-        self.assertEqual(supervisor.HEARTBEAT_TIMEOUT, 15.0)
+        self.assertEqual(supervisor.HEARTBEAT_TIMEOUT, 90.0)
 
     def test_survey_scalar_fields_survive_sanitizer_and_fifo_bound(self):
         report = survey.survey_fd(self.fd, MOUNTINFO)
@@ -228,14 +228,17 @@ raise SystemExit(s.emit(s.main(),0))
         self.assertEqual(payload['live_http_requests'], 0)
         self.assertEqual(list(mount.iterdir()), [])
 
-    def test_real_supervisor_survey_terminal_frame_and_no_respawn(self):
+    def test_supervisor_preserves_survey_fixture_frame_without_respawn(self):
         root = self.root / 'fake_runtime'
         root.mkdir()
         payload = {'mode':'separate_collector_storage_survey','state':'diagnostic_only','reason':'readonly_storage_metadata',
                    'order_permission':'none','active_collection':False,'live_http_requests':0,'survey_complete':True,
                    'mount_group_writable':True,'root_present':False,'started_present':False,'complete_present':False,
                    'persisted_identity_checked':False}
-        (root / 'collector_storage_survey.py').write_text('print(' + repr(json.dumps(payload)) + ', flush=True)\n')
+        # Preserve safe archived survey-status transport; this is a fake owner,
+        # not a production survey fallback or enrollment path.
+        (root / 'production_collector').mkdir()
+        (root / 'production_collector' / 'collector_owner.py').write_text('print(' + repr(json.dumps(payload)) + ', flush=True)\n')
         s = supervisor.CollectorSupervisor()
         self.addCleanup(s.close)
         with patch.object(supervisor, '__file__', str(root / 'collector_supervisor.py')):

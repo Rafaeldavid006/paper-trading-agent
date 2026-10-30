@@ -10,7 +10,7 @@ import sys
 import time
 
 FRAME_LIMIT = 16384
-HEARTBEAT_TIMEOUT = 15.0  # Diagnostic-only child; no source owner or fallback.
+HEARTBEAT_TIMEOUT = 90.0  # Owner heartbeat is 30 seconds; no restart or fallback.
 STOP_GRACE = 3.0
 REAP_GRACE = 1.0
 STATUS_FIELDS = frozenset((
@@ -81,7 +81,7 @@ class CollectorSupervisor:
             return
         self.started = True  # Even uncertain failure is not retried.
         try:
-            script = Path(__file__).resolve().parent / 'collector_storage_survey.py'
+            script = Path(__file__).resolve().parent / 'production_collector' / 'collector_owner.py'
             self.reaped = False  # Spawn uncertainty is never proven reaped.
             self.child = subprocess.Popen(
                 [sys.executable, '-I', '-S', str(script), str(os.getpid())],

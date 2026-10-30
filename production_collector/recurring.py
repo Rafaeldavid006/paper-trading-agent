@@ -17,11 +17,12 @@ import time
 from core_v2.core import Receipt
 from direct_adapter import CaptureEvidence, capture_json, parse, stamp
 from upstream.storage import durable_store as storage
+from cohort_evidence import CohortEvidenceStore
 from filesystem import PrivateRoot, canonical, digest, MIN_FREE, MAX_FILES
 from owned_transport import collect, wall_now
 from transport_contract import URL, LIMIT, FIXTURES
 
-VERSION = "recurring-lease-collector-v2"
+VERSION = "recurring-lease-collector-v3-storage2"
 SOURCE_ID = "ecb_daily_reference"
 PROFILE = "ecb_daily_reference"
 MAX_LIFETIME_ATTEMPTS = 128
@@ -80,7 +81,7 @@ class Lease:
 
 class LeaseCollector:
     def __init__(self, root, collector_id, *, create=False, offline_test_enabled=False,
-                 stop=None, wall=wall_now, mono=time.monotonic, live_release=None):
+                 stop=None, wall=wall_now, mono=time.monotonic, live_release=None, _enrollment_nonce=None, _enrollment_mount_pin=None, _enrollment_reopen=False):
         self.live_release = live_release
         self.synthetic_only = live_release is None
         if live_release is not None:
@@ -108,14 +109,25 @@ class LeaseCollector:
                   "synthetic_only": self.synthetic_only, "live_authorized": not self.synthetic_only,
                   "release_hash": None if live_release is None else digest(stable_identity(live_release)), "order_permission": "none"}
         try:
-            self.root = PrivateRoot(root, config, create=create)
-            self.db = sqlite3.connect(self.root.path / "ledger.sqlite", timeout=2, isolation_level=None)
+            self.root = PrivateRoot(root, config, create=create, nonce=_enrollment_nonce, parent_pin=_enrollment_mount_pin)
+            if live_release is not None and not create:
+                from enrollment import verify_enrollment, verify_bootstrap_reopen
+                phase = getattr(live_release, 'phase', None)
+                if phase == 'collect' or (phase == 'enroll' and not _enrollment_reopen):
+                    verify_enrollment(live_release, _anchor=self.root.anchor)
+                elif phase == 'enroll':
+                    if _enrollment_nonce is None or _enrollment_mount_pin is None:
+                        raise ValueError('explicit_bootstrap_context_required')
+                    verify_bootstrap_reopen(live_release,self.root.anchor,_enrollment_nonce)
+                self.root.check_anchors()
+            self.db = self.root.open_database("ledger.sqlite", timeout=2, isolation_level=None)
             self.db.row_factory = sqlite3.Row
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA synchronous=FULL")
             if create:
                 self.db.execute("PRAGMA journal_mode=WAL")
                 self.db.executescript('''
+                  CREATE TABLE collector_storage_identity (id INTEGER PRIMARY KEY CHECK(id=1), schema INTEGER NOT NULL, nonce TEXT NOT NULL);
                   CREATE TABLE config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
                   CREATE TABLE gates (id INTEGER PRIMARY KEY CHECK(id=1), fence TEXT, pause TEXT,
                     revoked INTEGER NOT NULL DEFAULT 0, last_claim_utc REAL);
@@ -131,12 +143,13 @@ class LeaseCollector:
                     phase TEXT NOT NULL, payload TEXT NOT NULL, previous_hash TEXT NOT NULL, record_hash TEXT NOT NULL UNIQUE);
                   CREATE TABLE blobs (body_hash TEXT PRIMARY KEY, body BLOB NOT NULL);
                 ''')
-                for table in ("config", "leases", "attempts", "missed", "events", "blobs"):
+                for table in ("collector_storage_identity", "config", "leases", "attempts", "missed", "events", "blobs"):
                     for op in ("UPDATE", "DELETE"):
                         self.db.execute(f"CREATE TRIGGER no_{table}_{op} BEFORE {op} ON {table} BEGIN SELECT RAISE(ABORT,'immutable'); END")
+                self.db.execute("INSERT INTO collector_storage_identity VALUES(1,2,?)", (self.root.nonce,))
                 self.db.execute("INSERT INTO config VALUES(1,?)", (canonical(self.root.config),))
                 self.db.execute("INSERT INTO gates(id) VALUES(1)")
-            self.store = storage.EvidenceStore(self.root.path / "evidence.sqlite", clock=wall)
+            self.store = CohortEvidenceStore(self.root, create=create, clock=wall)
             if create:
                 self.root.finalize()
             self.verify()
@@ -161,10 +174,13 @@ class LeaseCollector:
         return seq
 
     def _write(self, fn):
+        self.root.check_anchors()
         self.db.execute("BEGIN IMMEDIATE")
         try:
             answer = fn()
+            self.root.check_anchors()
             self.db.execute("COMMIT")
+            self.root.check_anchors()
             return answer
         except BaseException:
             if self.db.in_transaction:
@@ -313,6 +329,7 @@ class LeaseCollector:
         return bool(pending)
 
     def _launch_clock_reason(self, attempt):
+        self.root.check_anchors()
         current_mono, current_wall = self.mono(), epoch(self.wall())
         wallspan = current_wall - epoch(attempt["requested_at"])
         monospan = current_mono - attempt["request_mono"]
@@ -632,7 +649,7 @@ class LeaseCollector:
             kwargs = {} if _popen is None else {"popen": _popen}
             stage = "transport"
             result = collect(mode, stop=self.stop_event, deadline_mono=requested_mono + min(timeout, attempt["deadline_utc"] - epoch(requested_at)),
-                             wall=self.wall, mono=self.mono, live_release=self.live_release, **kwargs)
+                             wall=self.wall, mono=self.mono, live_release=self.live_release, before_spawn=self.root.check_anchors, **kwargs)
             audit = {k: v for k, v in asdict(result).items() if k not in ("body", "meta")}
             if result.reaped is not True:
                 self._finish_failure(attempt, "transport_reap_uncertain", audit, uncertain=True)
