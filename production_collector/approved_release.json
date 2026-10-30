@@ -1,10 +1,10 @@
 {
-  "enrollment_approved": true,
+  "enrollment_approved": false,
   "release": {
     "collector_id": "research-collector-ecb-v1",
     "enrollment_deadline": 1793361600,
     "enrollment_id": "ecb-enrollment-schema2-v1",
-    "enrollment_receipt_sha256": null,
+    "enrollment_receipt_sha256": "e57bb3782dd772ce0a3e89d4f50868d34b64fb391e35567fd417c5441dd05a5e",
     "enrollment_start": 1793358000,
     "lease": {
       "allow_transient_next_slot": false,
@@ -17,7 +17,7 @@
       "start": 1793383200,
       "synthetic_only": false
     },
-    "phase": "enroll",
+    "phase": "collect",
     "release_id": "ecb-storage-v2-enroll-20261030",
     "renewals": [],
     "root": "/var/data/research-collector-ecb-v1"
