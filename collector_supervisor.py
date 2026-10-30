@@ -10,7 +10,7 @@ import sys
 import time
 
 FRAME_LIMIT = 16384
-HEARTBEAT_TIMEOUT = 90.0
+HEARTBEAT_TIMEOUT = 15.0  # Diagnostic-only child; no source owner or fallback.
 STOP_GRACE = 3.0
 REAP_GRACE = 1.0
 STATUS_FIELDS = frozenset((
@@ -25,6 +25,20 @@ STATUS_FIELDS = frozenset((
     'eligible_for_backtest', 'automatic_retry', 'transport_mode', 'child_reaped',
     'enrollment_receipt_sha256', 'status_observed_at', 'integrity_verified_at',
     'status_cached', 'slot_grace_seconds'))
+
+# Diagnostic-only fixed scalar fields. No collector import or executable configuration.
+SURVEY_ROLES = ('started', 'complete', 'manifest', 'ready', 'ledger', 'evidence', 'lock')
+STATUS_FIELDS = STATUS_FIELDS | frozenset((
+    'survey_complete', 'survey_stage', 'survey_reason', 'survey_errno', 'persisted_identity_checked',
+    'mount_mode', 'mount_owned', 'mount_group_matches_egid', 'mount_group_in_supplementary',
+    'mount_group_writable', 'mount_other_writable',
+    'mount_setgid', 'mount_exclusive_write_gate', 'mount_free_bytes_ok',
+    'mount_free_inodes_ok', 'mount_identity_stable', 'mount_boundary_unique',
+    'mount_rw', 'mount_fs_type', 'mount_persistent_type', 'root_present',
+    'root_kind', 'root_mode', 'root_owned', 'root_private', 'root_same_device',
+    'root_identity_stable', 'fixed_entries_stable', 'databases_same_device') +
+    tuple(role + suffix for role in SURVEY_ROLES for suffix in ('_present', '_kind', '_mode', '_owned', '_single_link')))
+
 
 
 def sanitized_status(value):
@@ -67,7 +81,7 @@ class CollectorSupervisor:
             return
         self.started = True  # Even uncertain failure is not retried.
         try:
-            script = Path(__file__).resolve().parent / 'production_collector' / 'collector_owner.py'
+            script = Path(__file__).resolve().parent / 'collector_storage_survey.py'
             self.reaped = False  # Spawn uncertainty is never proven reaped.
             self.child = subprocess.Popen(
                 [sys.executable, '-I', '-S', str(script), str(os.getpid())],
