@@ -332,6 +332,11 @@ def main():
             return 1
         if stop.is_set():
             return 0
+        from market_source_check_supervisor import run_report as run_source_report
+        if not run_source_report(stop):
+            return 1
+        if stop.is_set():
+            return 0
         if REPORT_RECOVERY_STATE and not successor_requested and not admission_requested and not root_requested:
             if finite_requested or not _run_readonly_report(stop):
                 return 1
