@@ -193,23 +193,39 @@ def source_summary(source, raw, received_ns):
     require(source == 'iex_quotes' and data.get('feed', 'iex') == 'iex')
     quotes = data.get('quotes')
     require(type(quotes) is dict and set(quotes).issubset(SYMBOLS))
-    stamps = []
+    stamps, two_sided, one_sided, no_sides = [], [], 0, 0
     for symbol, row in quotes.items():
         require(type(row) is dict)
         stamp = timestamp(row.get('t'))
         bid, ask = row.get('bp'), row.get('ap')
         require(type(bid) in (int, Decimal) and type(ask) in (int, Decimal))
         require(Decimal(bid).is_finite() and Decimal(ask).is_finite() and
-                0 <= bid <= ask <= Decimal('1e12') and 0 < stamp <= received_ns)
+                0 <= bid <= Decimal('1e12') and 0 <= ask <= Decimal('1e12')
+                and 0 < stamp <= received_ns)
+        # Zero is the provider's absent-side representation, not a zero price
+        # at which to execute. Preserve rejection of crossed positive prices.
+        require(bid == 0 or ask == 0 or bid <= ask)
+        if bid > 0 and ask > 0:
+            two_sided.append(stamp)
+        elif bid == 0 and ask == 0:
+            no_sides += 1
+        else:
+            one_sided += 1
         stamps.append(stamp)
     fresh_count = sum(received_ns-stamp <= 10*NS for stamp in stamps)
     return dict(feed='iex', requested_symbol_count=len(SYMBOLS), returned_symbol_count=len(stamps),
         missing_symbol_count=len(SYMBOLS)-len(stamps), fresh_within_10s_count=fresh_count,
+        price_timestamp_shape_valid=True, one_sided_quote_count=one_sided,
+        no_sides_quote_count=no_sides, two_sided_price_count=len(two_sided),
+        fresh_two_sided_price_count=sum(received_ns-stamp <= 10*NS for stamp in two_sided),
         newest_quote_ns=max(stamps) if stamps else None,
         oldest_quote_ns=min(stamps) if stamps else None,
         newest_quote_age_seconds=(received_ns-max(stamps))//NS if stamps else None,
-        streaming=False, tradability_verified=False,
-        result=('received_empty' if not stamps else 'received_fresh' if fresh_count == len(SYMBOLS)
+        streaming=False, tradability_verified=False, execution_ready=False,
+        # Even a fresh positive two-sided price lacks verified size, conditions,
+        # market-clock, strategy and account/risk gates. This never authorizes it.
+        realtime_entitlement_verified=False,
+        result=('received_empty' if not stamps else 'received_fresh_timestamps' if fresh_count == len(SYMBOLS)
                 else 'received_stale_or_partial'))
 
 
