@@ -1,4 +1,4 @@
-"""One optional owned diagnostic child, no retry; must be reaped before startup."""
+"""Read retained source receipts only; acquisition startup is retired, no retries."""
 import json
 import os
 from pathlib import Path
@@ -19,7 +19,7 @@ def run_report(stop):
             reason = 'cancelled_before_start'
             return True
         child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve().with_name(
-            'market_source_check.py')), '--collect-source-once'], stdin=subprocess.DEVNULL,
+            'market_source_receipt_report.py')), '--read-existing-receipt'], stdin=subprocess.DEVNULL,
             stdout=None, stderr=subprocess.DEVNULL, shell=False, close_fds=True)
         deadline = time.monotonic()+22
         while True:
@@ -47,6 +47,6 @@ def run_report(stop):
                 reaped = True
             except Exception:
                 reaped = False
-        print(json.dumps(dict(mode='market_source_check_supervisor', reason=reason,
+        print(json.dumps(dict(mode='market_source_receipt_supervisor', reason=reason,
             child_reaped=reaped, automatic_retry=False, order_permission='none')), flush=True)
     return reaped
