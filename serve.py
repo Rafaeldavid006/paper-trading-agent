@@ -147,6 +147,52 @@ def _run_readonly_report(stop):
     return reaped
 
 
+def _run_inventory_report(stop):
+    """One local diagnostic child; no retry and no alternate admission gate."""
+    child = None
+    reaped = False
+    reason = 'inventory_start_uncertain'
+    try:
+        if stop.is_set():
+            reaped = True
+            reason = 'inventory_not_started'
+            return True
+        child = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve().with_name(
+            'native_state_inventory.py')), '--read-existing-state'],
+            stdin=subprocess.DEVNULL, stdout=None, stderr=subprocess.DEVNULL,
+            shell=False, close_fds=True)
+        deadline = time.monotonic() + 10
+        while True:
+            code = child.poll()
+            if code is not None:
+                reaped = True
+                reason = 'inventory_finished' if type(code) is int and code == 0 else 'inventory_failed'
+                break
+            if stop.wait(.1):
+                reason = 'inventory_cancelled'
+                break
+            if time.monotonic() >= deadline:
+                reason = 'inventory_timeout'
+                break
+    except Exception:
+        reason = 'inventory_process_uncertain'
+    finally:
+        if child is not None and not reaped:
+            try:
+                child.kill()
+            except Exception:
+                pass
+            try:
+                child.wait(timeout=1)
+                reaped = True
+            except Exception:
+                reaped = False
+        print(json.dumps(dict(mode='native_state_inventory_supervisor', reason=reason,
+            child_reaped=reaped, automatic_retry=False, provider_requests=0,
+            order_permission='none')), flush=True)
+    return reaped
+
+
 def _run_session_receipt(stop, action):
     """One local write-only receipt child after finite reap; no account IO/retry."""
     if action not in ('halt','close'):raise ValueError('invalid_session_receipt')
@@ -192,8 +238,32 @@ def _run_session_receipt(stop, action):
     return reaped
 
 
+class SignalSafeStop:
+    """Event-compatible stop observation without locks inside signal handlers.
+
+    A Python signal can interrupt Event.wait while its condition lock is held;
+    calling Event.set from that handler would deadlock the same thread. The
+    handler therefore records only a flag. Normal waits retain their existing
+    bounded timeout and observe the flag again after returning.
+    """
+    def __init__(self,event):
+        self.event=event
+        self.requested=False
+
+    def set(self):
+        self.requested=True
+
+    def is_set(self):
+        return self.requested or self.event.is_set()
+
+    def wait(self,timeout=None):
+        if self.requested:return True
+        result=self.event.wait(timeout)
+        return self.requested or result
+
+
 def main():
-    stop = threading.Event()
+    stop = SignalSafeStop(threading.Event())
     try:
         _, port = validate_environment(os.environ)
         if INSPECT_EXISTING_AUDIT_ONLY is not True:
@@ -248,8 +318,18 @@ def main():
     try:
         # Keep the current synchronous, readonly completed-migration verifier.
         # Neither migration apply authority nor its frozen receipt is changed.
+        # Local bounded inventory cannot replace or relax the completed-state gate.
+        if not _run_inventory_report(stop):
+            return 1
+        if stop.is_set():
+            return 0
         if not run_startup_gate(inspection_only=True, stop=stop):
             return 0 if stop.is_set() else 1
+        if stop.is_set():
+            return 0
+        from paper_account_diagnostic_supervisor import run_report as run_account_report
+        if not run_account_report(stop):
+            return 1
         if stop.is_set():
             return 0
         if REPORT_RECOVERY_STATE and not successor_requested and not admission_requested and not root_requested:
