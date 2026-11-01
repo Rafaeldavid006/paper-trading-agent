@@ -67,6 +67,13 @@ def connector():
 class Owner(TrialOwner):
     def __init__(self, *args, open_source=None, **kwargs):
         super().__init__(*args,open_source=open_source or connector(),**kwargs)
+        self.research = None
+        self.research_unavailable = False
+        if os.environ.get('PRIVATE_SOURCE_REPLAY') == '1':
+            try:
+                from private_research_bridge import ResearchReplay
+                self.research = ResearchReplay(self)
+            except Exception: self.research_unavailable = True
 
     def check(self):
         require(not self.stop.is_set(), 'stop_requested')
@@ -156,7 +163,7 @@ class Owner(TrialOwner):
                 current_fresh_symbol_count=sum(0 <= now-t <= 10*NS for t in state['quote_times'].values()),
                 newest_provider_age_seconds=(now-state['newest_provider_ns'])//NS if state['newest_provider_ns'] else None)
             sources[source] = public
-        return dict(mode='resident_source_owner',state='stopping' if self.stop.is_set() else 'running',
+        result = dict(mode='resident_source_owner',state='stopping' if self.stop.is_set() else 'running',
             heartbeat_ns=now,persisted_bytes=durable['retained_bytes'],byte_limit=self.grant['retained_bytes'],
             journal_seq=durable['seq'],journal_sha256=durable['head'],retained_after_seq=durable['anchor_seq'],
             retention_anchor_sha256=durable['anchor_hash'],purged_records=durable['purged_records'],
@@ -166,6 +173,12 @@ class Owner(TrialOwner):
             execution_ready=False,order_permission='none',coverage_complete=False,broker_requests=0,
             realtime_entitlement_verified=False,process_counters_only=True,clock_verified=False,
             market_session_verified=False,continuous_authority=True,reason=self.reason if self.stop.is_set() else None)
+        if self.research is not None:
+            result.update(self.research.status())
+            if 'research_frontier_seq' in result:
+                result['research_lag_records'] = max(0,durable['seq']-result['research_frontier_seq'])
+        elif self.research_unavailable: result.update(research_state='refused',research_reason='replay_unavailable')
+        return result
 
     async def watch(self, tasks):
         next_emit,next_pulse = 0,0
@@ -190,9 +203,14 @@ class Owner(TrialOwner):
         self.journal.boot(self.check())
         self.reason = 'sources_terminal'
         tasks = [asyncio.create_task(self.source(s,credentials)) for s in URLS]
-        await self.watch(tasks)
-        await asyncio.gather(*tasks,return_exceptions=True)
-        self.stop.set()
+        research_task = asyncio.create_task(self.research.run()) if self.research is not None else None
+        try:
+            await self.watch(tasks)
+            await asyncio.gather(*tasks,return_exceptions=True)
+        finally:
+            self.stop.set()
+            if research_task is not None and not research_task.done(): research_task.cancel()
+            if research_task is not None: await asyncio.gather(research_task,return_exceptions=True)
         if not self.journal.failed: self.journal.stopped(time.time_ns(),self.reason)
         self.emit()
 

@@ -1,0 +1,11 @@
+{
+  "bridge/continuation.py": "9847793ee5adb2368c37615a4999b9cbd2c9491121a198084da86579ae411867",
+  "bridge/pipeline.py": "a55426871adc767dc2769e0862b9a93f21b37b6150651e464697aae75768c4fb",
+  "bridge/research_bridge.py": "196861352a51f73024933cb8c7126751a987094facd8a95312a6150715ac465a",
+  "bridge/retained_stream.py": "900c40e15dbfd181b86268f3f4704948119f746c0ee5572b855af1c6241f5427",
+  "bridge/vendor/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "bridge/vendor/broad_discovery.py": "37075769f785631ff87086c4ae34ab76ba6fb716fd78d1f948f02e49662a3ce4",
+  "bridge/vendor/evidence_mapper.py": "9b5810307b417955504dddd56167ced7b9cf27b4d95428649c41c1b78bbd8671",
+  "bridge/vendor/stream_contract/live_source_protocol.py": "58944d4b2259a960fd14f73d9fafce3b4c810de707cfd84fac791226ab1a3fdf",
+  "resident_projection.py": "4ad93cd629e996a8e5524c807ed49780dd4b714361368e9be91adc1e2d6f3853"
+}

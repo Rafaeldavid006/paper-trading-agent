@@ -8,6 +8,10 @@ import time
 
 from live_source_supervisor import scalar_safe
 from resident_source_policy import KEY, policy
+from private_research_bridge import KEY as RESEARCH_KEY, PUBLIC_FIELDS
+
+# Separate bounded private replay; staged off until specifically authorized.
+APPROVED_PRIVATE_REPLAY = True
 
 # Requires a reviewed recurring-service policy, not the expired trial's consent.
 APPROVED_RESIDENT_SOURCE = {'version': 2, 'authority_id': 'resident-source-20261031-v1', 'starts_ns': 1793480820000000000, 'symbols': ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'MU', 'SPY'], 'news': '*', 'attempts_per_day': 8, 'attempts_per_hour': 4, 'boots_per_day': 8, 'retained_bytes': 100663296, 'retained_seconds': 1209600, 'predecessor': {'seq': 17, 'bytes': 5634, 'sha256': '0abb98e12cf41bf36ccfdd6a19f338524edfe2a9ec74fbf381afc5e9734e116e'}}
@@ -16,6 +20,7 @@ TOP = {'mode','state','heartbeat_ns','persisted_bytes','byte_limit','journal_seq
     'predecessor_sha256','boots_today','boots_total','iex_symbol_count','news_scope','sources',
     'execution_ready','order_permission','coverage_complete','broker_requests','realtime_entitlement_verified',
     'process_counters_only','clock_verified','market_session_verified','continuous_authority','reason'}
+TOP |= PUBLIC_FIELDS
 SOURCE = {'state','records','frames','fresh_records','one_sided','no_sides','two_sided','fresh_two_sided',
     'last_receipt_ns','newest_provider_ns','newest_update_ns','fresh_updates','duplicate_news',
     'attempts_reserved','attempts_today','retry_ns','terminal_reason','frames_total','records_total',
@@ -50,11 +55,12 @@ class SourceSupervisor:
 
     def _spawn(self):
         try:
-            if any(os.environ.get(k) for k in (KEY,'LIVE_SOURCE_STREAM_JSON')): raise ValueError()
+            if any(os.environ.get(k) for k in (KEY,'LIVE_SOURCE_STREAM_JSON',RESEARCH_KEY)): raise ValueError()
             raw = json.dumps(APPROVED_RESIDENT_SOURCE,sort_keys=True,separators=(',',':'))
             policy(raw)
             env = {k:os.environ[k] for k in ('ALPACA_API_KEY','ALPACA_SECRET_KEY','EVENT_DB') if k in os.environ}
             env[KEY] = raw
+            if APPROVED_PRIVATE_REPLAY is True: env[RESEARCH_KEY] = '1'
             self.buffer,self.last,self.stop_at,self.watchdog_restart = bytearray(),None,None,False
             self.child = subprocess.Popen([sys.executable,'-B',str(Path(__file__).resolve().with_name(
                 'resident_source_owner.py')),'--source-only',str(os.getpid())],stdin=subprocess.DEVNULL,
