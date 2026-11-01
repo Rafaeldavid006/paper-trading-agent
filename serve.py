@@ -31,6 +31,7 @@ from finite_root_supervisor import RootSupervisor
 from prepared_recovery_supervisor import PreparedRecoverySupervisor
 from collector_supervisor import CollectorSupervisor
 from resident_source_supervisor import SourceSupervisor
+from paper_asset_capture_supervisor import CaptureSupervisor
 
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
@@ -308,6 +309,7 @@ def main():
     children = []
     collector_runtime = CollectorSupervisor()
     source_runtime = SourceSupervisor()
+    capture_runtime = CaptureSupervisor()
     finite_runtime = (prepared_runtime if prepared_requested else
                       RootSupervisor(external_stop=stop) if root_requested else
                       ObservationSupervisor(external_stop=stop) if observation_requested else
@@ -357,9 +359,11 @@ def main():
         if not stop.is_set():
             collector_runtime.start()
             source_runtime.start()
+            capture_runtime.start()
         session_close_pending = False
         while not stop.wait(.5):
             source_runtime.poll()
+            capture_runtime.poll()
             collector_runtime.poll()
             collector_status = collector_runtime.report_if_due()
             if collector_status is not None:
@@ -392,6 +396,14 @@ def main():
                 return 1
         return 0
     finally:
+        # Capture cleanup is independent and cannot skip existing source/ECB/web cleanup.
+        try:
+            capture_runtime.close()
+        except BaseException:
+            try:
+                print('{"mode":"paper_asset_capture_supervisor","reason":"cleanup_uncertain","order_permission":"none","automatic_retry":false}',flush=True)
+            except BaseException:
+                pass  # Diagnostic failure must not skip existing sibling cleanup.
         # Signal independent owner and web before bounded existing finite cleanup.
         source_runtime.begin_stop()
         collector_runtime.begin_stop()
@@ -415,6 +427,7 @@ def main():
                     print(json.dumps(dict(mode='finite_paper_startup', reason='web_reap_pending',
                         order_permission='none', automatic_retry=False)), flush=True)
 
+        if not capture_runtime.reaped:return 1
         if not source_runtime.reaped:return 1
         if not collector_runtime.reaped:return 1
         if (prepared_requested or observation_requested or root_requested) and not finite_runtime.reaped:return 1
