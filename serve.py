@@ -30,7 +30,7 @@ import finite_root_contract as root_contract
 from finite_root_supervisor import RootSupervisor
 from prepared_recovery_supervisor import PreparedRecoverySupervisor
 from collector_supervisor import CollectorSupervisor
-from live_source_supervisor import SourceSupervisor
+from resident_source_supervisor import SourceSupervisor
 
 # Web routes remain inspection-only even if separately compiled finite grants
 # are supplied. This flag is not an audit-inspector or trading activation toggle.
